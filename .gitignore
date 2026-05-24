@@ -71,3 +71,5 @@ coverage.xml
 
 # Trae agent files (local only)
 .trae/
+# Claude Code local config
+.claude/
