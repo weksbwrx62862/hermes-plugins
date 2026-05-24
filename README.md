@@ -8,6 +8,7 @@
   <img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License">
   <img src="https://img.shields.io/badge/Hermes-%3E%3D2.0.0-orange.svg" alt="Hermes">
   <img src="https://img.shields.io/badge/Git%20LFS-Enabled-blueviolet.svg" alt="Git LFS">
+  <img src="https://img.shields.io/github/last-commit/weksbwrx62862/hermes-plugins?color=9cf&label=Last%20Commit" alt="Last Commit">
 </p>
 
 ---
@@ -316,6 +317,120 @@ git commit -m "feat(models): add new embedding model"
 
 ---
 
+## 路线图
+
+### v2.x — 当前迭代
+
+- [ ] **omnimem v1.1**：跨会话记忆持久化 + 隐私沙箱隔离
+- [ ] **model-router v2.3**：流式成本追踪 + 多供应商自动故障转移
+- [ ] **skill-router v2.1**：多语言嵌入支持（英文 BGE + 日文 LUKE）
+- [ ] **deepseek-cache-optimizer v1.2**：自适应前缀窗口 + 缓存预热策略
+
+### v3.0 — 下一里程碑
+
+- [ ] **插件市场**：在线注册中心 + 一键安装 + 版本管理
+- [ ] **可视化编排**：拖拽式插件组合编辑器
+- [ ] **跨框架桥接**：LangChain / CrewAI / AutoGen 适配层
+- [ ] **统一遥测面板**：所有插件的性能指标、调用链追踪、告警聚合
+- [ ] **自进化 v3**：群体进化（多技能协同优化）+ A/B 门控部署
+
+### 长期愿景
+
+- 🧠 **认知架构**：记忆 → 推理 → 行为的闭环自省能力
+- 🌐 **联邦学习**：跨实例的隐私保护技能共享
+- 🔌 **插件热更新**：运行时无中断替换插件实现
+
+---
+
+## 常见问题
+
+### 插件安装后 Hermes 无法识别？
+
+确保 `plugin.yaml` 位于插件根目录且格式正确。检查 Hermes 配置中 `plugins` 路径是否指向正确的插件目录。运行 `hermes plugin list` 查看已加载插件。
+
+### Git LFS 模型文件下载失败？
+
+确认已安装 Git LFS（`git lfs install`）。克隆时使用 `git lfs pull` 单独拉取模型文件。如果网络受限，可设置 `GIT_LFS_SKIP_SMUDGE=1` 跳过大文件，后续按需下载。
+
+### 多个插件之间有依赖冲突怎么办？
+
+每个插件建议使用独立虚拟环境。`omnimem` 等插件提供 `pyproject.toml`，可通过 `pip install -e .[all]` 在隔离环境中安装。如需全局安装，检查 `plugin.yaml` 中的 `dependencies` 字段是否有版本冲突。
+
+### 自进化引擎的 5 维门控全部通过的概率高吗？
+
+不高 —— 这是设计意图。AND 门控确保只有真正全面改进的变体才能部署，避免局部优化导致整体退化。初始阶段建议放宽门控阈值，随技能池成熟逐步收紧。
+
+### model-router 的影子流量如何工作？
+
+影子流量将请求同时发送给候选模型和当前生产模型，但只返回生产模型的结果。候选模型的响应被静默记录用于质量评估，不影响用户体验。当候选模型在统计上显著优于生产模型时，可手动或自动切换。
+
+### 可以只使用部分插件吗？
+
+可以。Hermes 插件遵循即插即用原则，每个插件独立运行。只需在配置中启用需要的插件即可，无需安装全部。
+
+---
+
+## Contributing
+
+欢迎为 Hermes Plugins 贡献代码！请遵循以下工作流：
+
+### Fork → Branch → Commit → PR 工作流
+
+```
+1. Fork    →  在 GitHub 上 Fork 本仓库到你的账号
+2. Branch  →  从 main 创建功能分支
+3. Commit  →  编写代码并提交（遵循 Conventional Commits）
+4. PR      →  向上游仓库提交 Pull Request
+```
+
+**详细步骤**：
+
+```bash
+# 1. Fork 后克隆你的仓库
+git clone https://github.com/<your-username>/hermes-plugins.git
+cd hermes-plugins
+
+# 2. 创建功能分支（命名规范：<type>/<brief-description>）
+git checkout -b feat/my-new-plugin
+
+# 3. 开发与提交
+# ... 编写代码 ...
+git add -A
+git commit -m "feat(my-plugin): add new plugin for X capability"
+
+# 4. 推送并创建 PR
+git push origin feat/my-new-plugin
+# 在 GitHub 上向 weksbwrx62862/hermes-plugins 发起 Pull Request
+```
+
+### Commit 规范
+
+使用 [Conventional Commits](https://www.conventionalcommits.org/) 格式：
+
+| Type | 用途 |
+|------|------|
+| `feat` | 新插件或新功能 |
+| `fix` | 修复 Bug |
+| `refactor` | 重构（不改变行为） |
+| `docs` | 文档更新 |
+| `test` | 测试补充 |
+| `chore` | 构建/依赖/配置变更 |
+
+### 代码要求
+
+- 新插件必须包含 `plugin.yaml` + `__init__.py` + 测试
+- 通过 `ruff check` 和 `mypy` 检查
+- 公共 API 需包含类型注解和 docstring
+- 如涉及模型文件，使用 Git LFS 管理
+
+### PR 审查
+
+- PR 需至少 1 位 Reviewer 批准
+- CI 检查全部通过后方可合并
+- 合并方式：Squash Merge（保持 main 历史整洁）
+
+---
+
 ## License
 
 MIT License
@@ -329,5 +444,7 @@ MIT License
 ---
 
 <p align="center">
-  <sub>Built with ❤️ for the Hermes Agent ecosystem</sub>
+  <sub>⚡ Hermes Plugins — 让每一个 Agent 都拥有无限可能 ⚡</sub>
+  <br/>
+  <sub>Plug. Play. Evolve.</sub>
 </p>
