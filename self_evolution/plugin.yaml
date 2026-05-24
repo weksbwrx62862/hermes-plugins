@@ -1,0 +1,14 @@
+name: self-evolution
+version: 2.0.0
+description: "自进化插件 — 8阶段 Loop、3层评测、5维 AND 门控，技能自动优化"
+kind: standalone
+author: hermes-agent
+hermes_compat: ">=2.0.0"
+provides_tools:
+  - self_evo_status
+  - self_evo_scan
+  - self_evo_approve
+  - self_evo_reject
+  - self_evo_execute
+  - self_evo_evolve
+  - self_evo_rollback

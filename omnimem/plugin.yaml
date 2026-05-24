@@ -1,0 +1,22 @@
+name: omnimem
+version: 1.0.0
+description: "OmniMem — 五层混合记忆系统：感知→工作→结构化→深层→内化，含治理引擎(冲突/衰减/遗忘/隐私/溯源)"
+pip_dependencies:
+  # 核心依赖（建议锁定主版本，避免 API Breaking Change）
+  - "chromadb>=0.4.0,<0.7.0"
+  - "rank-bm25>=0.2.0,<0.3.0"
+  - "tiktoken>=0.7.0"
+  - "pyyaml>=6.0"
+  - "sentence-transformers>=2.2.0"
+  - "jieba>=0.42.1"
+  - "typing-extensions>=4.0.0"
+  - "openai>=1.0.0"
+  - "httpx>=0.24.0"
+  # 可选依赖：加密隐私数据（未安装时自动降级为明文标记）
+  # - "cryptography>=42.0.0"
+requires_env: []
+hooks:
+  - on_session_end
+  - on_pre_compress
+  - on_memory_write
+  - on_delegation

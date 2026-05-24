@@ -1,0 +1,17 @@
+name: model-router
+version: 2.2.0
+description: "多模型智能路由 v2.2 — 时间感知路由 + 成本监控 + 影子流量 + 路由矩阵配置化"
+kind: backend
+author: finance-assistant team
+hermes_compat: ">=2.0.0"
+provides_tools:
+  - model_route
+  - model_pool
+  - model_balance
+  - time_info
+  - model_route_for_cron
+  - rate_limit_status
+  - cost_dashboard
+provides_hooks:
+  - pre_llm_call
+  - post_llm_call

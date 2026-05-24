@@ -1,0 +1,15 @@
+name: skill_pool
+version: 1.0.0
+description: "技能池向量索引 + 语义搜索 + core/pool 分类管理"
+kind: standalone
+author: hermes-agent
+hermes_compat: ">=2.0.0"
+provides_tools:
+  - skill_pool_build
+  - skill_pool_search
+  - skill_pool_list
+  - skill_pool_set_core
+  - skill_pool_set_pool
+  - skill_pool_auto_tune
+  - skill_pool_snapshot
+  - skill_pool_usage

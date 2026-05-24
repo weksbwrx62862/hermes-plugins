@@ -1,0 +1,10 @@
+name: dev-lifecycle
+version: 2.0.0
+description: "软件开发生命周期技能包 v2 — 新增工作流状态机、质量门禁、项目上下文感知、遥测统计与配置管理。覆盖 grill→PRD→plan→prototype→TDD→debug→review→triage→handoff 全链路，支持 start/advance/rollback/resume/report 工作流操作。"
+kind: backend
+author: xxh
+hermes_compat: ">=2.0.0"
+provides_tools:
+  - dev_workflow
+provides_hooks:
+  - on_session_start

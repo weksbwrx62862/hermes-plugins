@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>OmniMem Social Preview Generator</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.7.0/p5.min.js"></script>
+  <style>
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: #f5f5f5;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    h1 {
+      font-weight: 300;
+      color: #1a1a2e;
+      margin-bottom: 10px;
+    }
+    #canvas-container {
+      box-shadow: 0 8px 32px rgba(0,0,0,0.15);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .controls {
+      margin-top: 20px;
+      display: flex;
+      gap: 15px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    button {
+      padding: 10px 24px;
+      border: none;
+      border-radius: 6px;
+      background: #1a1a2e;
+      color: white;
+      font-size: 14px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    button:hover {
+      background: #2d2d44;
+    }
+    .info {
+      margin-top: 15px;
+      color: #666;
+      font-size: 13px;
+    }
+  </style>
+</head>
+<body>
+  <h1>OmniMem Social Preview Generator</h1>
+  <div id="canvas-container"></div>
+  <div class="controls">
+    <button onclick="regenerate()">重新生成</button>
+    <button onclick="downloadPNG()">下载 PNG</button>
+  </div>
+  <div class="info">
+    尺寸：1280 × 640 px | 适合 GitHub 社交预览
+  </div>
+
+  <script>
+    let seed = 42;
+    const W = 1280;
+    const H = 640;
+
+    function setup() {
+      let canvas = createCanvas(W, H);
+      canvas.parent('canvas-container');
+      noLoop();
+      generate();
+    }
+
+    function generate() {
+      randomSeed(seed);
+      noiseSeed(seed);
+
+      // 背景：深色渐变
+      background(26, 26, 46); // #1a1a2e
+
+      // 绘制五层记忆架构
+      drawMemoryLayers();
+
+      // 绘制神经连接
+      drawNeuralConnections();
+
+      // 绘制标题
+      drawTitle();
+
+      // 绘制装饰性粒子
+      drawParticles();
+    }
+
+    function drawMemoryLayers() {
+      let layerColors = [
+        color(100, 200, 255, 40),   // L0 感知 - 青色
+        color(150, 100, 255, 40),   // L1 工作 - 紫色
+        color(255, 200, 100, 40),   // L2 结构化 - 金色
+        color(255, 100, 150, 40),   // L3 深层 - 粉红
+        color(100, 255, 180, 40),   // L4 内化 - 翠绿
+      ];
+
+      let layerNames = ["L0 感知", "L1 工作", "L2 结构化", "L3 深层", "L4 内化"];
+      let layerHeight = H / 6;
+      let startY = H * 0.15;
+
+      for (let i = 0; i < 5; i++) {
+        let y = startY + i * layerHeight;
+
+        // 层背景
+        noStroke();
+        fill(layerColors[i]);
+        rect(0, y, W, layerHeight * 0.8, 4);
+
+        // 层标签
+        fill(255, 255, 255, 180);
+        textAlign(LEFT, CENTER);
+        textSize(14);
+        textFont('Segoe UI');
+        text(layerNames[i], 40, y + layerHeight * 0.4);
+
+        // 层内的记忆节点
+        let nodeCount = floor(random(8, 15));
+        for (let j = 0; j < nodeCount; j++) {
+          let nx = random(200, W - 100);
+          let ny = y + random(10, layerHeight * 0.7);
+          let ns = random(3, 8);
+
+          fill(255, 255, 255, random(30, 80));
+          noStroke();
+          ellipse(nx, ny, ns, ns);
+        }
+      }
+    }
+
+    function drawNeuralConnections() {
+      strokeWeight(0.5);
+      let nodeCount = 60;
+      let nodes = [];
+
+      for (let i = 0; i < nodeCount; i++) {
+        nodes.push({
+          x: random(50, W - 50),
+          y: random(50, H - 50),
+          layer: floor(random(5))
+        });
+      }
+
+      for (let i = 0; i < nodes.length; i++) {
+        for (let j = i + 1; j < nodes.length; j++) {
+          let d = dist(nodes[i].x, nodes[i].y, nodes[j].x, nodes[j].y);
+          if (d < 120) {
+            let alpha = map(d, 0, 120, 60, 10);
+            stroke(100, 200, 255, alpha);
+            line(nodes[i].x, nodes[i].y, nodes[j].x, nodes[j].y);
+          }
+        }
+      }
+    }
+
+    function drawTitle() {
+      // 主标题背景遮罩
+      noStroke();
+      fill(26, 26, 46, 200);
+      rect(W * 0.55, H * 0.25, W * 0.4, H * 0.5, 12);
+
+      // 主标题
+      fill(255);
+      textAlign(CENTER, CENTER);
+      textSize(72);
+      textFont('Segoe UI');
+      textStyle(BOLD);
+      text("OmniMem", W * 0.75, H * 0.38);
+
+      // 副标题
+      textSize(20);
+      textStyle(NORMAL);
+      fill(180, 200, 255);
+      text("五层混合记忆系统", W * 0.75, H * 0.48);
+
+      // 描述
+      textSize(13);
+      fill(150, 160, 180);
+      text("感知 → 工作 → 结构化 → 深层 → 内化", W * 0.75, H * 0.56);
+
+      // 装饰线
+      stroke(100, 200, 255, 150);
+      strokeWeight(2);
+      line(W * 0.68, H * 0.44, W * 0.82, H * 0.44);
+    }
+
+    function drawParticles() {
+      for (let i = 0; i < 30; i++) {
+        let x = random(W);
+        let y = random(H);
+        let s = random(1, 3);
+        fill(255, 255, 255, random(10, 40));
+        noStroke();
+        ellipse(x, y, s, s);
+      }
+    }
+
+    function regenerate() {
+      seed = floor(random(100000));
+      generate();
+    }
+
+    function downloadPNG() {
+      saveCanvas(`omnimem-social-preview-${seed}`, 'png');
+    }
+  </script>
+</body>
+</html>

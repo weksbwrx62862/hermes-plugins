@@ -1,0 +1,11 @@
+name: skill-router
+version: 2.0.0
+description: "统一技能路由 v2.0 — 微调中文嵌入 + core/pool 分层 + pre_llm_call 自动注入"
+kind: backend
+author: hermes-agent
+hermes_compat: ">=2.0.0"
+provides_tools:
+  - skill_search
+  - skill_feedback
+provides_hooks:
+  - pre_llm_call

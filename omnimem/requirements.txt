@@ -1,0 +1,29 @@
+# OmniMem 核心依赖
+# 安装: pip install -r requirements.txt
+
+# 向量数据库
+chromadb>=0.4.0,<0.7.0
+
+# BM25 关键词检索
+rank-bm25>=0.2.0,<0.3.0
+
+# 中文分词（BM25 可选依赖）
+jieba>=0.42.1
+
+# Token 计数
+tiktoken>=0.7.0
+
+# YAML 配置解析
+pyyaml>=6.0
+
+# 语义嵌入生成（向量检索必需）
+sentence-transformers>=2.2.0
+
+# 类型扩展
+typing-extensions>=4.0.0
+
+# OpenAI API 客户端
+openai>=1.0.0
+
+# HTTP 客户端
+httpx>=0.24.0

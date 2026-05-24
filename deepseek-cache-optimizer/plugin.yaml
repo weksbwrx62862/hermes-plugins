@@ -1,0 +1,15 @@
+name: deepseek-cache-optimizer
+version: 1.1.0
+description: >
+  DeepSeek/MiMo prefix-cache 优化器 + Reasonix 机制。
+  Pillar 1: 工具排序 + 前缀保护压缩。
+  Pillar 2: call-storm 检测 + 失败信号升级。
+  Pillar 3: 轮末自动压缩。
+author: hermes-agent
+requires:
+  hermes_version: ">=0.14.0"
+hooks:
+  - pre_llm_call
+  - post_tool_call
+  - transform_tool_result
+  - post_api_request

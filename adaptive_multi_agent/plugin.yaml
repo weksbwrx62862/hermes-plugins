@@ -1,0 +1,14 @@
+name: adaptive_multi_agent
+version: 1.0.0
+description: "Adaptive Multi-Agent (AMA) — 自适应多智能体调度插件。根据任务复杂度自动选择最佳的 Anthropic 多智能体协作模式（Generator-Verifier / Orchestrator-Subagent / Agent Teams / Message Bus / Shared State），通过 delegate_tool 委派子智能体执行，支持智能模式切换、性能持久化和历史学习。"
+author: xxh
+kind: backend
+provides_tools:
+  - ama_execute
+  - ama_assess
+  - ama_switch_mode
+  - ama_stats
+provides_hooks:
+  - post_tool_call
+  - on_session_start
+  - on_session_end
