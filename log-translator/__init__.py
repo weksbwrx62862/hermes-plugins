@@ -442,7 +442,7 @@ def uninstall_translator():
 
 # ── Hermes 插件接口 ──────────────────────────────────────────────────────────
 
-def register():
+def register(ctx=None):
     """Hermes 插件注册入口"""
     return install_translator()
 
