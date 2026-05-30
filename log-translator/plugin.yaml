@@ -1,0 +1,6 @@
+name: log-translator
+version: 1.1.0
+description: Hermes 日志翻译器 v1.1.0 - LRU缓存+关键词预过滤+翻译统计
+phase: UTILITY
+dependencies: []
+entry_point: __init__.py
