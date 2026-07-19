@@ -1,0 +1,1195 @@
+{
+  "timestamp": "2026-07-06T22:05:00.225479",
+  "summary": {
+    "PASS": 111,
+    "FAIL": 0,
+    "WARN": 4,
+    "SKIP": 54,
+    "TOTAL": 169
+  },
+  "results": [
+    {
+      "plugin": "(cross-plugin)",
+      "test": "hook_priority_consistency",
+      "status": "PASS",
+      "message": "10 种钩子, 14 次注册",
+      "duration_ms": 29.8
+    },
+    {
+      "plugin": "adaptive_multi_agent",
+      "test": "metadata_integrity",
+      "status": "PASS",
+      "message": "version=1.0.0, tools=12, hooks=0",
+      "duration_ms": 0.2
+    },
+    {
+      "plugin": "adaptive_multi_agent",
+      "test": "python_syntax",
+      "status": "PASS",
+      "message": "19 个文件语法检查通过",
+      "duration_ms": 54.3
+    },
+    {
+      "plugin": "adaptive_multi_agent",
+      "test": "external_dependencies",
+      "status": "PASS",
+      "message": "env=0, python=any",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "adaptive_multi_agent",
+      "test": "load_performance",
+      "status": "PASS",
+      "message": "load=20ms, register=0.0ms",
+      "duration_ms": 20.2
+    },
+    {
+      "plugin": "adaptive_multi_agent",
+      "test": "hook_chain",
+      "status": "WARN",
+      "message": "2 个钩子调用有异常(可能是参数问题)",
+      "duration_ms": 0.1
+    },
+    {
+      "plugin": "adaptive_multi_agent",
+      "test": "schema_consistency",
+      "status": "PASS",
+      "message": "12 个工具 schema 一致",
+      "duration_ms": 0.2
+    },
+    {
+      "plugin": "adaptive_multi_agent",
+      "test": "provider_interface",
+      "status": "SKIP",
+      "message": "未找到 provider.py",
+      "duration_ms": 0.7
+    },
+    {
+      "plugin": "adaptive_multi_agent",
+      "test": "dependency_interfaces",
+      "status": "SKIP",
+      "message": "无依赖声明",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "codegraph",
+      "test": "metadata_integrity",
+      "status": "PASS",
+      "message": "version=1.0.0, tools=5, hooks=0",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "codegraph",
+      "test": "python_syntax",
+      "status": "PASS",
+      "message": "3 个文件语法检查通过",
+      "duration_ms": 2.5
+    },
+    {
+      "plugin": "codegraph",
+      "test": "external_dependencies",
+      "status": "PASS",
+      "message": "env=0, python=any",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "codegraph",
+      "test": "load_performance",
+      "status": "PASS",
+      "message": "load=0ms, register=0.0ms",
+      "duration_ms": 0.4
+    },
+    {
+      "plugin": "codegraph",
+      "test": "hook_chain",
+      "status": "SKIP",
+      "message": "无钩子声明或注册",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "codegraph",
+      "test": "schema_consistency",
+      "status": "PASS",
+      "message": "5 个工具 schema 一致",
+      "duration_ms": 0.2
+    },
+    {
+      "plugin": "codegraph",
+      "test": "provider_interface",
+      "status": "PASS",
+      "message": "1 个 Provider 正常",
+      "duration_ms": 0.4
+    },
+    {
+      "plugin": "codegraph",
+      "test": "dependency_interfaces",
+      "status": "WARN",
+      "message": "1 个依赖插件缺失: ['codegraph>=0.9.9']",
+      "duration_ms": 0.3
+    },
+    {
+      "plugin": "deepseek-cache-optimizer",
+      "test": "metadata_integrity",
+      "status": "PASS",
+      "message": "version=2.0.0, tools=0, hooks=0",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "deepseek-cache-optimizer",
+      "test": "python_syntax",
+      "status": "PASS",
+      "message": "2 个文件语法检查通过",
+      "duration_ms": 13.6
+    },
+    {
+      "plugin": "deepseek-cache-optimizer",
+      "test": "external_dependencies",
+      "status": "PASS",
+      "message": "env=0, python=any",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "deepseek-cache-optimizer",
+      "test": "load_performance",
+      "status": "PASS",
+      "message": "load=2ms, register=0.0ms",
+      "duration_ms": 1.8
+    },
+    {
+      "plugin": "deepseek-cache-optimizer",
+      "test": "hook_chain",
+      "status": "PASS",
+      "message": "5 个钩子均可调用",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "deepseek-cache-optimizer",
+      "test": "schema_consistency",
+      "status": "SKIP",
+      "message": "无工具注册",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "deepseek-cache-optimizer",
+      "test": "provider_interface",
+      "status": "SKIP",
+      "message": "未找到 provider.py",
+      "duration_ms": 0.3
+    },
+    {
+      "plugin": "deepseek-cache-optimizer",
+      "test": "dependency_interfaces",
+      "status": "SKIP",
+      "message": "无依赖声明",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "dev-lifecycle",
+      "test": "metadata_integrity",
+      "status": "PASS",
+      "message": "version=2.0.0, tools=1, hooks=0",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "dev-lifecycle",
+      "test": "python_syntax",
+      "status": "PASS",
+      "message": "10 个文件语法检查通过",
+      "duration_ms": 15.2
+    },
+    {
+      "plugin": "dev-lifecycle",
+      "test": "external_dependencies",
+      "status": "PASS",
+      "message": "env=0, python=any",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "dev-lifecycle",
+      "test": "load_performance",
+      "status": "PASS",
+      "message": "load=5ms, register=0.9ms",
+      "duration_ms": 5.8
+    },
+    {
+      "plugin": "dev-lifecycle",
+      "test": "hook_chain",
+      "status": "PASS",
+      "message": "1 个钩子均可调用",
+      "duration_ms": 0.8
+    },
+    {
+      "plugin": "dev-lifecycle",
+      "test": "schema_consistency",
+      "status": "PASS",
+      "message": "1 个工具 schema 一致",
+      "duration_ms": 0.5
+    },
+    {
+      "plugin": "dev-lifecycle",
+      "test": "provider_interface",
+      "status": "SKIP",
+      "message": "未找到 provider.py",
+      "duration_ms": 0.6
+    },
+    {
+      "plugin": "dev-lifecycle",
+      "test": "dependency_interfaces",
+      "status": "SKIP",
+      "message": "无依赖声明",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "disk-cleanup",
+      "test": "metadata_integrity",
+      "status": "PASS",
+      "message": "version=2.0.0, tools=0, hooks=2",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "disk-cleanup",
+      "test": "python_syntax",
+      "status": "PASS",
+      "message": "2 个文件语法检查通过",
+      "duration_ms": 4.9
+    },
+    {
+      "plugin": "disk-cleanup",
+      "test": "external_dependencies",
+      "status": "PASS",
+      "message": "env=0, python=any",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "disk-cleanup",
+      "test": "load_performance",
+      "status": "PASS",
+      "message": "load=5ms, register=0.0ms",
+      "duration_ms": 5.2
+    },
+    {
+      "plugin": "disk-cleanup",
+      "test": "hook_chain",
+      "status": "PASS",
+      "message": "2 个钩子均可调用",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "disk-cleanup",
+      "test": "schema_consistency",
+      "status": "SKIP",
+      "message": "无工具注册",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "disk-cleanup",
+      "test": "provider_interface",
+      "status": "SKIP",
+      "message": "未找到 provider.py",
+      "duration_ms": 0.2
+    },
+    {
+      "plugin": "disk-cleanup",
+      "test": "dependency_interfaces",
+      "status": "SKIP",
+      "message": "无依赖声明",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "gateway-restart",
+      "test": "metadata_integrity",
+      "status": "PASS",
+      "message": "version=1.0.0, tools=0, hooks=0",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "gateway-restart",
+      "test": "python_syntax",
+      "status": "PASS",
+      "message": "1 个文件语法检查通过",
+      "duration_ms": 2.0
+    },
+    {
+      "plugin": "gateway-restart",
+      "test": "external_dependencies",
+      "status": "PASS",
+      "message": "env=0, python=any",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "gateway-restart",
+      "test": "load_performance",
+      "status": "PASS",
+      "message": "load=1ms, register=342.9ms",
+      "duration_ms": 343.6
+    },
+    {
+      "plugin": "gateway-restart",
+      "test": "hook_chain",
+      "status": "SKIP",
+      "message": "无钩子声明或注册",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "gateway-restart",
+      "test": "schema_consistency",
+      "status": "SKIP",
+      "message": "无工具注册",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "gateway-restart",
+      "test": "provider_interface",
+      "status": "SKIP",
+      "message": "未找到 provider.py",
+      "duration_ms": 0.2
+    },
+    {
+      "plugin": "gateway-restart",
+      "test": "dependency_interfaces",
+      "status": "SKIP",
+      "message": "无依赖声明",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "google_meet",
+      "test": "metadata_integrity",
+      "status": "PASS",
+      "message": "version=0.2.0, tools=5, hooks=1",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "google_meet",
+      "test": "python_syntax",
+      "status": "PASS",
+      "message": "0 个文件语法检查通过",
+      "duration_ms": 0.2
+    },
+    {
+      "plugin": "google_meet",
+      "test": "external_dependencies",
+      "status": "PASS",
+      "message": "env=0, python=any",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "google_meet",
+      "test": "load_performance",
+      "status": "PASS",
+      "message": "load=2ms, register=0.0ms",
+      "duration_ms": 2.0
+    },
+    {
+      "plugin": "google_meet",
+      "test": "hook_chain",
+      "status": "PASS",
+      "message": "1 个钩子均可调用",
+      "duration_ms": 0.1
+    },
+    {
+      "plugin": "google_meet",
+      "test": "schema_consistency",
+      "status": "PASS",
+      "message": "5 个工具 schema 一致",
+      "duration_ms": 0.1
+    },
+    {
+      "plugin": "google_meet",
+      "test": "provider_interface",
+      "status": "SKIP",
+      "message": "未找到 provider.py",
+      "duration_ms": 0.3
+    },
+    {
+      "plugin": "google_meet",
+      "test": "dependency_interfaces",
+      "status": "SKIP",
+      "message": "无依赖声明",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "langfuse",
+      "test": "metadata_integrity",
+      "status": "PASS",
+      "message": "version=1.0.0, tools=0, hooks=6",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "langfuse",
+      "test": "python_syntax",
+      "status": "PASS",
+      "message": "0 个文件语法检查通过",
+      "duration_ms": 0.1
+    },
+    {
+      "plugin": "langfuse",
+      "test": "external_dependencies",
+      "status": "WARN",
+      "message": "缺环境变量: ['HERMES_LANGFUSE_PUBLIC_KEY', 'HERMES_LANGFUSE_SECRET_KEY']",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "langfuse",
+      "test": "load_performance",
+      "status": "PASS",
+      "message": "load=1ms, register=0.0ms",
+      "duration_ms": 1.3
+    },
+    {
+      "plugin": "langfuse",
+      "test": "hook_chain",
+      "status": "PASS",
+      "message": "6 个钩子均可调用",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "langfuse",
+      "test": "schema_consistency",
+      "status": "SKIP",
+      "message": "无工具注册",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "langfuse",
+      "test": "provider_interface",
+      "status": "SKIP",
+      "message": "未找到 provider.py",
+      "duration_ms": 0.1
+    },
+    {
+      "plugin": "langfuse",
+      "test": "dependency_interfaces",
+      "status": "SKIP",
+      "message": "无依赖声明",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "log-translator",
+      "test": "metadata_integrity",
+      "status": "PASS",
+      "message": "version=1.1.0, tools=0, hooks=0",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "log-translator",
+      "test": "python_syntax",
+      "status": "PASS",
+      "message": "2 个文件语法检查通过",
+      "duration_ms": 6.3
+    },
+    {
+      "plugin": "log-translator",
+      "test": "external_dependencies",
+      "status": "PASS",
+      "message": "env=0, python=any",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "log-translator",
+      "test": "load_performance",
+      "status": "PASS",
+      "message": "load=1ms, register=4.7ms",
+      "duration_ms": 5.3
+    },
+    {
+      "plugin": "log-translator",
+      "test": "hook_chain",
+      "status": "SKIP",
+      "message": "无钩子声明或注册",
+      "duration_ms": 0.1
+    },
+    {
+      "plugin": "log-translator",
+      "test": "schema_consistency",
+      "status": "SKIP",
+      "message": "无工具注册",
+      "duration_ms": 0.1
+    },
+    {
+      "plugin": "log-translator",
+      "test": "provider_interface",
+      "status": "SKIP",
+      "message": "未找到 provider.py",
+      "duration_ms": 0.1
+    },
+    {
+      "plugin": "log-translator",
+      "test": "dependency_interfaces",
+      "status": "SKIP",
+      "message": "无依赖声明",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "model-router",
+      "test": "metadata_integrity",
+      "status": "PASS",
+      "message": "version=2.2.0, tools=7, hooks=0",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "model-router",
+      "test": "python_syntax",
+      "status": "PASS",
+      "message": "4 个文件语法检查通过",
+      "duration_ms": 25.5
+    },
+    {
+      "plugin": "model-router",
+      "test": "external_dependencies",
+      "status": "PASS",
+      "message": "env=0, python=any",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "model-router",
+      "test": "load_performance",
+      "status": "PASS",
+      "message": "load=1ms, register=57.5ms",
+      "duration_ms": 58.2
+    },
+    {
+      "plugin": "model-router",
+      "test": "hook_chain",
+      "status": "PASS",
+      "message": "3 个钩子均可调用",
+      "duration_ms": 1220.4
+    },
+    {
+      "plugin": "model-router",
+      "test": "schema_consistency",
+      "status": "PASS",
+      "message": "7 个工具 schema 一致",
+      "duration_ms": 0.2
+    },
+    {
+      "plugin": "model-router",
+      "test": "provider_interface",
+      "status": "SKIP",
+      "message": "未找到 provider.py",
+      "duration_ms": 0.2
+    },
+    {
+      "plugin": "model-router",
+      "test": "dependency_interfaces",
+      "status": "SKIP",
+      "message": "无依赖声明",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "omnimem",
+      "test": "metadata_integrity",
+      "status": "PASS",
+      "message": "version=1.0.0, tools=0, hooks=4",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "omnimem",
+      "test": "python_syntax",
+      "status": "PASS",
+      "message": "191 个文件语法检查通过",
+      "duration_ms": 407.7
+    },
+    {
+      "plugin": "omnimem",
+      "test": "external_dependencies",
+      "status": "PASS",
+      "message": "env=0, python=any",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "omnimem",
+      "test": "load_performance",
+      "status": "PASS",
+      "message": "load=1ms, register=384.6ms",
+      "duration_ms": 385.2
+    },
+    {
+      "plugin": "omnimem",
+      "test": "hook_chain",
+      "status": "PASS",
+      "message": "0 个钩子均可调用",
+      "duration_ms": 0.1
+    },
+    {
+      "plugin": "omnimem",
+      "test": "schema_consistency",
+      "status": "SKIP",
+      "message": "无工具注册",
+      "duration_ms": 0.1
+    },
+    {
+      "plugin": "omnimem",
+      "test": "provider_interface",
+      "status": "PASS",
+      "message": "2 个 Provider 正常",
+      "duration_ms": 181.5
+    },
+    {
+      "plugin": "omnimem",
+      "test": "dependency_interfaces",
+      "status": "SKIP",
+      "message": "无依赖声明",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "plugin-orchestrator",
+      "test": "metadata_integrity",
+      "status": "PASS",
+      "message": "version=1.0.0, tools=0, hooks=0",
+      "duration_ms": 0.1
+    },
+    {
+      "plugin": "plugin-orchestrator",
+      "test": "python_syntax",
+      "status": "PASS",
+      "message": "8 个文件语法检查通过",
+      "duration_ms": 14.0
+    },
+    {
+      "plugin": "plugin-orchestrator",
+      "test": "external_dependencies",
+      "status": "PASS",
+      "message": "env=0, python=any",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "plugin-orchestrator",
+      "test": "load_performance",
+      "status": "PASS",
+      "message": "load=0ms, register=0.1ms",
+      "duration_ms": 0.5
+    },
+    {
+      "plugin": "plugin-orchestrator",
+      "test": "hook_chain",
+      "status": "SKIP",
+      "message": "无钩子声明或注册",
+      "duration_ms": 0.1
+    },
+    {
+      "plugin": "plugin-orchestrator",
+      "test": "schema_consistency",
+      "status": "SKIP",
+      "message": "无工具注册",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "plugin-orchestrator",
+      "test": "provider_interface",
+      "status": "SKIP",
+      "message": "未找到 provider.py",
+      "duration_ms": 0.2
+    },
+    {
+      "plugin": "plugin-orchestrator",
+      "test": "dependency_interfaces",
+      "status": "SKIP",
+      "message": "无依赖声明",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "prompt-optimizer",
+      "test": "metadata_integrity",
+      "status": "PASS",
+      "message": "version=1.0.0, tools=4, hooks=0",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "prompt-optimizer",
+      "test": "python_syntax",
+      "status": "PASS",
+      "message": "5 个文件语法检查通过",
+      "duration_ms": 8.2
+    },
+    {
+      "plugin": "prompt-optimizer",
+      "test": "external_dependencies",
+      "status": "PASS",
+      "message": "env=0, python=any",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "prompt-optimizer",
+      "test": "load_performance",
+      "status": "PASS",
+      "message": "load=1ms, register=0.0ms",
+      "duration_ms": 1.5
+    },
+    {
+      "plugin": "prompt-optimizer",
+      "test": "hook_chain",
+      "status": "PASS",
+      "message": "1 个钩子均可调用",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "prompt-optimizer",
+      "test": "schema_consistency",
+      "status": "PASS",
+      "message": "4 个工具 schema 一致",
+      "duration_ms": 0.2
+    },
+    {
+      "plugin": "prompt-optimizer",
+      "test": "provider_interface",
+      "status": "SKIP",
+      "message": "未找到 provider.py",
+      "duration_ms": 0.2
+    },
+    {
+      "plugin": "prompt-optimizer",
+      "test": "dependency_interfaces",
+      "status": "SKIP",
+      "message": "无依赖声明",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "rejection-ledger",
+      "test": "metadata_integrity",
+      "status": "PASS",
+      "message": "version=1.0.0, tools=3, hooks=1",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "rejection-ledger",
+      "test": "python_syntax",
+      "status": "PASS",
+      "message": "1 个文件语法检查通过",
+      "duration_ms": 3.3
+    },
+    {
+      "plugin": "rejection-ledger",
+      "test": "external_dependencies",
+      "status": "PASS",
+      "message": "env=0, python=any",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "rejection-ledger",
+      "test": "load_performance",
+      "status": "PASS",
+      "message": "load=1ms, register=0.4ms",
+      "duration_ms": 1.2
+    },
+    {
+      "plugin": "rejection-ledger",
+      "test": "hook_chain",
+      "status": "PASS",
+      "message": "2 个钩子均可调用",
+      "duration_ms": 0.5
+    },
+    {
+      "plugin": "rejection-ledger",
+      "test": "schema_consistency",
+      "status": "PASS",
+      "message": "3 个工具 schema 一致",
+      "duration_ms": 0.4
+    },
+    {
+      "plugin": "rejection-ledger",
+      "test": "provider_interface",
+      "status": "SKIP",
+      "message": "未找到 provider.py",
+      "duration_ms": 0.2
+    },
+    {
+      "plugin": "rejection-ledger",
+      "test": "dependency_interfaces",
+      "status": "SKIP",
+      "message": "无依赖声明",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "repo-chinese-names",
+      "test": "metadata_integrity",
+      "status": "PASS",
+      "message": "version=1.1.0, tools=0, hooks=0",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "repo-chinese-names",
+      "test": "python_syntax",
+      "status": "PASS",
+      "message": "2 个文件语法检查通过",
+      "duration_ms": 4.9
+    },
+    {
+      "plugin": "repo-chinese-names",
+      "test": "external_dependencies",
+      "status": "PASS",
+      "message": "env=0, python=any",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "repo-chinese-names",
+      "test": "load_performance",
+      "status": "PASS",
+      "message": "load=0ms, register=0.0ms",
+      "duration_ms": 0.4
+    },
+    {
+      "plugin": "repo-chinese-names",
+      "test": "hook_chain",
+      "status": "SKIP",
+      "message": "无钩子声明或注册",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "repo-chinese-names",
+      "test": "schema_consistency",
+      "status": "PASS",
+      "message": "3 个工具 schema 一致",
+      "duration_ms": 0.1
+    },
+    {
+      "plugin": "repo-chinese-names",
+      "test": "provider_interface",
+      "status": "SKIP",
+      "message": "未找到 provider.py",
+      "duration_ms": 0.1
+    },
+    {
+      "plugin": "repo-chinese-names",
+      "test": "dependency_interfaces",
+      "status": "SKIP",
+      "message": "无依赖声明",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "self_evolution",
+      "test": "metadata_integrity",
+      "status": "PASS",
+      "message": "version=2.1.0, tools=7, hooks=0",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "self_evolution",
+      "test": "python_syntax",
+      "status": "PASS",
+      "message": "27 个文件语法检查通过",
+      "duration_ms": 60.7
+    },
+    {
+      "plugin": "self_evolution",
+      "test": "external_dependencies",
+      "status": "PASS",
+      "message": "env=0, python=any",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "self_evolution",
+      "test": "load_performance",
+      "status": "PASS",
+      "message": "load=0ms, register=0.0ms",
+      "duration_ms": 0.4
+    },
+    {
+      "plugin": "self_evolution",
+      "test": "hook_chain",
+      "status": "SKIP",
+      "message": "无钩子声明或注册",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "self_evolution",
+      "test": "schema_consistency",
+      "status": "PASS",
+      "message": "11 个工具 schema 一致",
+      "duration_ms": 0.2
+    },
+    {
+      "plugin": "self_evolution",
+      "test": "provider_interface",
+      "status": "SKIP",
+      "message": "未找到 Provider 类",
+      "duration_ms": 404.6
+    },
+    {
+      "plugin": "self_evolution",
+      "test": "dependency_interfaces",
+      "status": "SKIP",
+      "message": "无依赖声明",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "skill-router",
+      "test": "metadata_integrity",
+      "status": "PASS",
+      "message": "version=3.1.0, tools=2, hooks=0",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "skill-router",
+      "test": "python_syntax",
+      "status": "PASS",
+      "message": "8 个文件语法检查通过",
+      "duration_ms": 19.7
+    },
+    {
+      "plugin": "skill-router",
+      "test": "external_dependencies",
+      "status": "PASS",
+      "message": "env=0, python=any",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "skill-router",
+      "test": "load_performance",
+      "status": "PASS",
+      "message": "load=6ms, register=51.6ms",
+      "duration_ms": 57.2
+    },
+    {
+      "plugin": "skill-router",
+      "test": "hook_chain",
+      "status": "PASS",
+      "message": "1 个钩子均可调用",
+      "duration_ms": 48.1
+    },
+    {
+      "plugin": "skill-router",
+      "test": "schema_consistency",
+      "status": "PASS",
+      "message": "2 个工具 schema 一致",
+      "duration_ms": 0.1
+    },
+    {
+      "plugin": "skill-router",
+      "test": "provider_interface",
+      "status": "SKIP",
+      "message": "未找到 provider.py",
+      "duration_ms": 3.1
+    },
+    {
+      "plugin": "skill-router",
+      "test": "dependency_interfaces",
+      "status": "SKIP",
+      "message": "无依赖声明",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "skill_pool",
+      "test": "metadata_integrity",
+      "status": "PASS",
+      "message": "version=1.0.0, tools=8, hooks=0",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "skill_pool",
+      "test": "python_syntax",
+      "status": "PASS",
+      "message": "1 个文件语法检查通过",
+      "duration_ms": 5.1
+    },
+    {
+      "plugin": "skill_pool",
+      "test": "external_dependencies",
+      "status": "PASS",
+      "message": "env=0, python=any",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "skill_pool",
+      "test": "load_performance",
+      "status": "PASS",
+      "message": "load=0ms, register=0.0ms",
+      "duration_ms": 0.5
+    },
+    {
+      "plugin": "skill_pool",
+      "test": "hook_chain",
+      "status": "SKIP",
+      "message": "无钩子声明或注册",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "skill_pool",
+      "test": "schema_consistency",
+      "status": "PASS",
+      "message": "8 个工具 schema 一致",
+      "duration_ms": 0.1
+    },
+    {
+      "plugin": "skill_pool",
+      "test": "provider_interface",
+      "status": "SKIP",
+      "message": "未找到 provider.py",
+      "duration_ms": 0.2
+    },
+    {
+      "plugin": "skill_pool",
+      "test": "dependency_interfaces",
+      "status": "SKIP",
+      "message": "无依赖声明",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "taste_skill",
+      "test": "metadata_integrity",
+      "status": "PASS",
+      "message": "version=1.0.0, tools=4, hooks=0",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "taste_skill",
+      "test": "python_syntax",
+      "status": "PASS",
+      "message": "3 个文件语法检查通过",
+      "duration_ms": 3.2
+    },
+    {
+      "plugin": "taste_skill",
+      "test": "external_dependencies",
+      "status": "PASS",
+      "message": "env=0, python=any",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "taste_skill",
+      "test": "load_performance",
+      "status": "PASS",
+      "message": "load=0ms, register=0.4ms",
+      "duration_ms": 0.8
+    },
+    {
+      "plugin": "taste_skill",
+      "test": "hook_chain",
+      "status": "SKIP",
+      "message": "无钩子声明或注册",
+      "duration_ms": 0.4
+    },
+    {
+      "plugin": "taste_skill",
+      "test": "schema_consistency",
+      "status": "PASS",
+      "message": "4 个工具 schema 一致",
+      "duration_ms": 0.5
+    },
+    {
+      "plugin": "taste_skill",
+      "test": "provider_interface",
+      "status": "PASS",
+      "message": "1 个 Provider 正常",
+      "duration_ms": 1.0
+    },
+    {
+      "plugin": "taste_skill",
+      "test": "dependency_interfaces",
+      "status": "SKIP",
+      "message": "无依赖声明",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "teams_pipeline",
+      "test": "metadata_integrity",
+      "status": "PASS",
+      "message": "version=0.1.0, tools=0, hooks=0",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "teams_pipeline",
+      "test": "python_syntax",
+      "status": "PASS",
+      "message": "0 个文件语法检查通过",
+      "duration_ms": 0.1
+    },
+    {
+      "plugin": "teams_pipeline",
+      "test": "external_dependencies",
+      "status": "PASS",
+      "message": "env=0, python=any",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "teams_pipeline",
+      "test": "load_performance",
+      "status": "PASS",
+      "message": "load=0ms, register=0.0ms",
+      "duration_ms": 0.1
+    },
+    {
+      "plugin": "teams_pipeline",
+      "test": "hook_chain",
+      "status": "SKIP",
+      "message": "无钩子声明或注册",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "teams_pipeline",
+      "test": "schema_consistency",
+      "status": "SKIP",
+      "message": "无工具注册",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "teams_pipeline",
+      "test": "provider_interface",
+      "status": "SKIP",
+      "message": "未找到 provider.py",
+      "duration_ms": 0.1
+    },
+    {
+      "plugin": "teams_pipeline",
+      "test": "dependency_interfaces",
+      "status": "SKIP",
+      "message": "无依赖声明",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "understand_anything",
+      "test": "metadata_integrity",
+      "status": "PASS",
+      "message": "version=1.0.0, tools=4, hooks=0",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "understand_anything",
+      "test": "python_syntax",
+      "status": "PASS",
+      "message": "3 个文件语法检查通过",
+      "duration_ms": 2.8
+    },
+    {
+      "plugin": "understand_anything",
+      "test": "external_dependencies",
+      "status": "PASS",
+      "message": "env=0, python=any",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "understand_anything",
+      "test": "load_performance",
+      "status": "PASS",
+      "message": "load=0ms, register=0.0ms",
+      "duration_ms": 0.4
+    },
+    {
+      "plugin": "understand_anything",
+      "test": "hook_chain",
+      "status": "SKIP",
+      "message": "无钩子声明或注册",
+      "duration_ms": 0.0
+    },
+    {
+      "plugin": "understand_anything",
+      "test": "schema_consistency",
+      "status": "PASS",
+      "message": "4 个工具 schema 一致",
+      "duration_ms": 0.1
+    },
+    {
+      "plugin": "understand_anything",
+      "test": "provider_interface",
+      "status": "PASS",
+      "message": "1 个 Provider 正常",
+      "duration_ms": 0.6
+    },
+    {
+      "plugin": "understand_anything",
+      "test": "dependency_interfaces",
+      "status": "WARN",
+      "message": "2 个依赖插件缺失: ['node>=22', 'pnpm>=10']",
+      "duration_ms": 0.7
+    }
+  ]
+}

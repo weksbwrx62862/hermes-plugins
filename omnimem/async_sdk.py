@@ -64,7 +64,6 @@ class AsyncOmniMemSDK:
 
     async def compact(self, **kwargs: Any) -> dict:
         """异步压缩前准备。"""
-        args = {**kwargs}
         raw = await asyncio.to_thread(self._sdk.compact, **kwargs)
         return raw
 

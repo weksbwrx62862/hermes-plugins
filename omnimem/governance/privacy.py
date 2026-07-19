@@ -93,6 +93,10 @@ class PrivacyManager:
         """OPT-1: 加密内容。如果加密不可用，返回带标记的明文。"""
         return self._encryption.encrypt(content)
 
+    def encrypt_content_with_status(self, content: str) -> dict[str, str]:
+        """OPT-1: 加密内容并返回加密状态。"""
+        return self._encryption.encrypt_with_status(content)
+
     def decrypt_content(self, ciphertext: str) -> str:
         """OPT-1: 解密内容。处理加密不可用或解密失败的情况。"""
         return self._encryption.decrypt(ciphertext)

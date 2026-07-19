@@ -6,7 +6,7 @@ import json
 import unittest
 from unittest.mock import MagicMock
 
-from omnimem.core.action_memory import ActionRecord, ActionMemoryService
+from omnimem.core.action_memory import ActionMemoryService, ActionRecord
 from omnimem.handlers.record_action import handle_record_action
 
 
@@ -244,13 +244,23 @@ class TestHandleRecordAction(unittest.TestCase):
         self.provider._action_memory.record_action.return_value = "mem-001"
 
     def test_basic_record(self) -> None:
+        # Non-routine tool with lesson_learned should be stored
+        result = json.loads(handle_record_action(self.provider, {
+            "action_type": "tool_call",
+            "tool_name": "mcp_lark_drive",
+            "outcome": "success",
+        }))
+        self.assertEqual(result["status"], "stored")
+        self.assertEqual(result["memory_id"], "mem-001")
+
+    def test_routine_tool_filtered(self) -> None:
+        # Routine tool success should be filtered
         result = json.loads(handle_record_action(self.provider, {
             "action_type": "tool_call",
             "tool_name": "search_files",
             "outcome": "success",
         }))
-        self.assertEqual(result["status"], "stored")
-        self.assertEqual(result["memory_id"], "mem-001")
+        self.assertEqual(result["status"], "filtered")
 
     def test_unavailable(self) -> None:
         provider = MagicMock()

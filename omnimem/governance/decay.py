@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 import math
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ HALF_LIVES = {
 class TemporalDecay:
     """时间衰减引擎。"""
 
-    def __init__(self, custom_half_lives: Optional[dict[str, float]] = None):
+    def __init__(self, custom_half_lives: dict[str, float] | None = None):
         self._half_lives = {**HALF_LIVES}
         if custom_half_lives:
             self._half_lives.update(custom_half_lives)

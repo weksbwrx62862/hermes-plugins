@@ -11,24 +11,34 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
+from omnimem.core.prompt_builder import build_system_prompt
+from omnimem.core.tool_names import (
+    MEMORY_COMPAT,
+    OMNI_COMPACT,
+    OMNI_DETAIL,
+    OMNI_GOVERN,
+    OMNI_MEMORIZE,
+    OMNI_RECALL,
+    OMNI_RECORD_ACTION,
+    OMNI_REFLECT,
+)
 from omnimem.core.tool_router import (
     ToolRouter,
+    apply_sync_change,
+    get_config_schema,
     handle_compact,
     handle_detail,
-    build_system_prompt,
-    get_config_schema,
-    save_config,
-    apply_sync_change,
-    retry_index_add,
-    retry_retriever_add,
-    retry_kg_extract,
     l3_recall,
+    retry_index_add,
+    retry_kg_extract,
+    retry_retriever_add,
     run_prefetch,
     run_queue_prefetch,
+    save_config,
 )
-
+from omnimem.provider import OmniMemProvider
 
 # ──────────────────────────────────────────────
 # ToolRouter 路由分发
@@ -45,6 +55,7 @@ class TestToolRouter(unittest.TestCase):
         self.compact_fn = MagicMock(return_value=json.dumps({"status": "ready"}))
         self.detail_fn = MagicMock(return_value=json.dumps({"status": "ok", "count": 0}))
         self.compat_fn = MagicMock(return_value=json.dumps({"status": "ok"}))
+        self.record_action_fn = MagicMock(return_value=json.dumps({"status": "recorded"}))
 
         self.router = ToolRouter(
             memorize_fn=self.memorize_fn,
@@ -54,43 +65,50 @@ class TestToolRouter(unittest.TestCase):
             compact_fn=self.compact_fn,
             detail_fn=self.detail_fn,
             memory_compat_fn=self.compat_fn,
+            record_action_fn=self.record_action_fn,
         )
 
     def test_route_omni_memorize(self) -> None:
-        result = self.router.route("omni_memorize", {"content": "测试"})
+        result = self.router.route(OMNI_MEMORIZE, {"content": "测试"})
         data = json.loads(result)
         self.assertEqual(data["status"], "stored")
         self.memorize_fn.assert_called_once()
 
     def test_route_omni_recall(self) -> None:
-        result = self.router.route("omni_recall", {"query": "test"})
+        result = self.router.route(OMNI_RECALL, {"query": "test"})
         data = json.loads(result)
         self.assertEqual(data["count"], 3)
         self.recall_fn.assert_called_once()
 
     def test_route_omni_govern(self) -> None:
-        result = self.router.route("omni_govern", {"action": "archive"})
+        result = self.router.route(OMNI_GOVERN, {"action": "archive"})
         data = json.loads(result)
         self.assertEqual(data["status"], "ok")
         self.govern_fn.assert_called_once()
 
     def test_route_omni_reflect(self) -> None:
-        result = self.router.route("omni_reflect", {"query": "思考"})
+        result = self.router.route(OMNI_REFLECT, {"query": "思考"})
         data = json.loads(result)
         self.assertEqual(data["status"], "reflected")
 
     def test_route_omni_compact(self) -> None:
-        result = self.router.route("omni_compact", {"budget": 2000})
+        result = self.router.route(OMNI_COMPACT, {"budget": 2000})
         data = json.loads(result)
         self.assertEqual(data["status"], "ready")
 
     def test_route_omni_detail(self) -> None:
-        result = self.router.route("omni_detail", {"action": "list"})
+        result = self.router.route(OMNI_DETAIL, {"action": "list"})
         data = json.loads(result)
         self.assertEqual(data["status"], "ok")
 
+    def test_route_omni_record_action(self) -> None:
+        result = self.router.route(OMNI_RECORD_ACTION, {"action_type": "decision"})
+        data = json.loads(result)
+        self.assertEqual(data["status"], "recorded")
+        self.record_action_fn.assert_called_once()
+
     def test_route_memory_compat(self) -> None:
-        result = self.router.route("memory", {"action": "add"})
+        result = self.router.route(MEMORY_COMPAT, {"action": "add"})
         data = json.loads(result)
         self.assertEqual(data["status"], "ok")
         self.compat_fn.assert_called_once()
@@ -103,10 +121,26 @@ class TestToolRouter(unittest.TestCase):
 
     def test_get_tool_names(self) -> None:
         names = self.router.get_tool_names()
-        self.assertIn("omni_memorize", names)
-        self.assertIn("omni_recall", names)
-        self.assertIn("memory", names)
-        self.assertEqual(len(names), 7)
+        self.assertIn(OMNI_MEMORIZE, names)
+        self.assertIn(OMNI_RECALL, names)
+        self.assertIn(MEMORY_COMPAT, names)
+        self.assertIn(OMNI_RECORD_ACTION, names)
+        self.assertEqual(len(names), 8)
+
+    def test_routes_match_tool_name_constants(self) -> None:
+        """路由表 key 应与 tool_names 常量完全一致。"""
+        names = set(self.router.get_tool_names())
+        expected = {
+            OMNI_MEMORIZE,
+            OMNI_RECALL,
+            OMNI_GOVERN,
+            OMNI_REFLECT,
+            OMNI_COMPACT,
+            OMNI_DETAIL,
+            OMNI_RECORD_ACTION,
+            MEMORY_COMPAT,
+        }
+        self.assertEqual(names, expected)
 
 
 # ──────────────────────────────────────────────
@@ -287,7 +321,7 @@ class TestBuildSystemPrompt(unittest.TestCase):
         self.assertIn("AI助手 v1", result)
 
     def test_with_entries(self) -> None:
-        self.store.search.side_effect = lambda memory_type, limit: {
+        self.store.search.side_effect = lambda memory_type, **__: {
             "preference": [
                 {"content": "喜欢深色主题", "memory_id": "p1", "type": "preference"}
             ],
@@ -311,7 +345,7 @@ class TestBuildSystemPrompt(unittest.TestCase):
         self.assertIn("喜欢深色主题", result)
 
     def test_fingerprint_dedup(self) -> None:
-        self.store.search.side_effect = lambda memory_type, limit: {
+        self.store.search.side_effect = lambda memory_type, **__: {
             "preference": [
                 {"content": "喜欢Python", "memory_id": "p1", "type": "preference"}
             ],
@@ -528,7 +562,7 @@ class TestRunPrefetch(unittest.TestCase):
         self.temporal_decay = MagicMock()
         self.temporal_decay.apply = MagicMock(side_effect=lambda x: x)
         self.privacy = MagicMock()
-        self.privacy.filter = MagicMock(side_effect=lambda x, **kw: x)
+        self.privacy.filter = MagicMock(side_effect=lambda x, **_kw: x)
         self.lock = MagicMock()
 
     def test_empty_all(self) -> None:
@@ -606,7 +640,7 @@ class TestRunQueuePrefetch(unittest.TestCase):
         self.temporal_decay = MagicMock()
         self.temporal_decay.apply = MagicMock(side_effect=lambda x: x)
         self.privacy = MagicMock()
-        self.privacy.filter = MagicMock(side_effect=lambda x, **kw: x)
+        self.privacy.filter = MagicMock(side_effect=lambda x, **_kw: x)
         self.lock = MagicMock()
 
     def test_returns_serialized(self) -> None:
@@ -637,3 +671,27 @@ class TestRunQueuePrefetch(unittest.TestCase):
             prefetch_lock=self.lock,
         )
         self.assertEqual(result, "")
+
+
+# ──────────────────────────────────────────────
+# Provider 工具名一致性
+# ──────────────────────────────────────────────
+
+class TestProviderToolNameConsistency(unittest.TestCase):
+    """Provider 注册的工具名应与 tool_names 常量一致。"""
+
+    def test_provider_schema_names_match_constants(self) -> None:
+        provider = OmniMemProvider()
+        schemas = provider.get_tool_schemas()
+        names = {s["name"] for s in schemas}
+        expected = {
+            OMNI_MEMORIZE,
+            OMNI_RECALL,
+            OMNI_GOVERN,
+            OMNI_REFLECT,
+            OMNI_COMPACT,
+            OMNI_DETAIL,
+            OMNI_RECORD_ACTION,
+            MEMORY_COMPAT,
+        }
+        self.assertEqual(names, expected)

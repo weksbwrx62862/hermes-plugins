@@ -12,7 +12,7 @@
 ### 克隆仓库
 
 ```bash
-git clone https://github.com/yourusername/omnimem.git
+git clone https://github.com/nousresearch/omnimem.git
 cd omnimem
 ```
 
@@ -149,7 +149,7 @@ Fixes #123
 
 ## 报告 Bug
 
-请使用 [Bug Report 模板](https://github.com/yourusername/omnimem/issues/new?template=bug_report.md) 创建 issue，并包含：
+请使用 [Bug Report 模板](https://github.com/nousresearch/omnimem/issues/new?template=bug_report.md) 创建 issue，并包含：
 
 - 清晰的 bug 描述
 - 复现步骤
@@ -159,7 +159,7 @@ Fixes #123
 
 ## 请求功能
 
-请使用 [Feature Request 模板](https://github.com/yourusername/omnimem/issues/new?template=feature_request.md) 创建 issue，并描述：
+请使用 [Feature Request 模板](https://github.com/nousresearch/omnimem/issues/new?template=feature_request.md) 创建 issue，并描述：
 
 - 功能的使用场景
 - 期望的解决方案
@@ -167,7 +167,7 @@ Fixes #123
 
 ## 社区
 
-- 在 [Discussions](https://github.com/yourusername/omnimem/discussions) 中提问和交流
+- 在 [Discussions](https://github.com/nousresearch/omnimem/discussions) 中提问和交流
 - 尊重他人，保持友善
 
 ## 许可证

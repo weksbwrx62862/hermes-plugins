@@ -1,2 +1,6 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+models/reranker/*.safetensors filter=lfs diff=lfs merge=lfs -text
+models/reranker/onnx/*.onnx filter=lfs diff=lfs merge=lfs -text
+models/reranker/openvino/*.bin filter=lfs diff=lfs merge=lfs -text
+models/reranker/openvino/*.xml filter=lfs diff=lfs merge=lfs -text

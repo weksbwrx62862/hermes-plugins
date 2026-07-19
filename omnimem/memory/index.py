@@ -56,6 +56,11 @@ class ThreeLevelIndex:
         self._pending_writes = 0
         self._init_db()
 
+    @property
+    def db_path(self) -> Path:
+        """公开访问数据库文件路径。"""
+        return self._db_path
+
     def _init_db(self) -> None:
         """初始化 SQLite 数据库。"""
         self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
@@ -86,7 +91,7 @@ class ThreeLevelIndex:
         )
 
         # ★ 旧 schema 迁移：补全缺失的列
-        _MIGRATE_COLUMNS = [
+        _migrate_columns = [
             ("wing", "TEXT NOT NULL DEFAULT ''"),
             ("hall", "TEXT NOT NULL DEFAULT ''"),
             ("room", "TEXT NOT NULL DEFAULT ''"),
@@ -99,8 +104,10 @@ class ThreeLevelIndex:
             ("metadata", "TEXT"),
             ("conflicting_with", "TEXT"),
             ("conflict_type", "TEXT"),
+            ("is_updated", "INTEGER DEFAULT 0"),
+            ("is_superseded", "INTEGER DEFAULT 0"),
         ]
-        for col_name, col_def in _MIGRATE_COLUMNS:
+        for col_name, col_def in _migrate_columns:
             try:
                 self._conn.execute(f"SELECT {col_name} FROM memory_index LIMIT 1")
             except sqlite3.OperationalError:
@@ -116,6 +123,32 @@ class ThreeLevelIndex:
         """)
         self._conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_stored_at ON memory_index(stored_at)
+        """)
+        # FTS5 fulltext index (replaces LIKE '%keyword%' full-scan in search_l2)
+        self._conn.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS memory_index_fts USING fts5(content)
+        """)
+        # ★ 修复根因 A:改用 DELETE FROM 替代 FTS5 'delete' 特殊命令
+        #   'delete' 命令在 contentful FTS5 表上不可用(仅 external content/contentless 表可用)
+        #   用标准 DELETE FROM 替代,且先 DROP 旧触发器(IF NOT EXISTS 不会替换已存在的)
+        self._conn.execute("DROP TRIGGER IF EXISTS memory_index_fts_ai")
+        self._conn.execute("DROP TRIGGER IF EXISTS memory_index_fts_ad")
+        self._conn.execute("DROP TRIGGER IF EXISTS memory_index_fts_au")
+        self._conn.execute("""
+            CREATE TRIGGER memory_index_fts_ai AFTER INSERT ON memory_index BEGIN
+                INSERT INTO memory_index_fts(rowid, content) VALUES (new.rowid, new.content);
+            END
+        """)
+        self._conn.execute("""
+            CREATE TRIGGER memory_index_fts_ad AFTER DELETE ON memory_index BEGIN
+                DELETE FROM memory_index_fts WHERE rowid = old.rowid;
+            END
+        """)
+        self._conn.execute("""
+            CREATE TRIGGER memory_index_fts_au AFTER UPDATE ON memory_index BEGIN
+                DELETE FROM memory_index_fts WHERE rowid = old.rowid;
+                INSERT INTO memory_index_fts(rowid, content) VALUES (new.rowid, new.content);
+            END
         """)
 
         self._conn.commit()
@@ -220,7 +253,7 @@ class ThreeLevelIndex:
         except Exception as e:
             logger.warning("L0 search failed: %s", e)
             raise
-    
+
     def search_by_directory(
         self,
         wing: str = "",
@@ -228,16 +261,16 @@ class ThreeLevelIndex:
         room: str = "",
     ) -> list[dict[str, Any]]:
         """按目录结构查询索引条目。
-        
+
         内化 OpenViking 的目录定位能力：
         通过 Wing/Hall/Room 三级目录缩小搜索空间，
         返回目录内所有条目的 memory_id 和摘要。
-        
+
         Args:
             wing: Wing 名称（personal/team/public）
             hall: Hall 名称（facts/preferences/...）
             room: Room 名称（话题）
-        
+
         Returns:
             匹配的索引条目列表
         """
@@ -270,7 +303,7 @@ class ThreeLevelIndex:
         except Exception as e:
             logger.warning("Directory search failed: %s", e)
             raise
-    
+
     def search_l1(self, wing: str = "", type: str = "", limit: int = 50) -> list[dict[str, Any]]:
         """L1 摘要索引：返回摘要记录（含 content 用于 warm_up）。"""
         assert self._conn is not None
@@ -314,28 +347,88 @@ class ThreeLevelIndex:
         type: str = "",
         limit: int = 20,
     ) -> list[dict[str, Any]]:
-        """L2 全文索引：返回完整记录。"""
+        """L2 全文索引：返回完整记录（FTS5 优先，LIKE 回退）。"""
         assert self._conn is not None
-        query = "SELECT * FROM memory_index WHERE 1=1"
-        params = []
+        use_fts5 = False
+        fts_keyword = ""
         if keyword:
-            escaped = keyword.replace("%", "\\%").replace("_", "\\_")
-            query += " AND content LIKE ? ESCAPE '\\'"
-            params.append(f"%{escaped}%")
-        if wing:
-            query += " AND wing = ?"
-            params.append(wing)
-        if type:
-            query += " AND type = ?"
-            params.append(type)
-        query += " ORDER BY stored_at DESC LIMIT ?"
-        params.append(str(limit))
+            # ★ 修复根因 B:FTS5 默认 unicode61 分词器把中文当单个 token,
+            #   双引号短语查询无法匹配短关键字,中文强制走 LIKE 回退
+            has_non_ascii = any(ord(c) > 127 for c in keyword) if keyword else False
+            if has_non_ascii:
+                use_fts5 = False
+            else:
+                # 检测 FTS5 表是否可用
+                try:
+                    self._conn.execute(
+                        "SELECT 1 FROM memory_index_fts LIMIT 0"
+                    )
+                    use_fts5 = True
+                except sqlite3.OperationalError:
+                    pass
+
+            if use_fts5:
+                # FTS5: 转义特殊字符并构造 MATCH 查询
+                fts_keyword = self._escape_fts5(keyword)
+                base_query = """
+                    SELECT memory_index.* FROM memory_index
+                    JOIN memory_index_fts ON memory_index.rowid = memory_index_fts.rowid
+                    WHERE memory_index_fts MATCH ?
+                """
+                params: list[Any] = [fts_keyword]
+                if wing:
+                    base_query += " AND memory_index.wing = ?"
+                    params.append(wing)
+                if type:
+                    base_query += " AND memory_index.type = ?"
+                    params.append(type)
+                base_query += " ORDER BY memory_index.stored_at DESC LIMIT ?"
+                params.append(limit)
+            else:
+                # LIKE 回退（旧 schema 或 FTS5 不可用）
+                escaped = keyword.replace("%", "\\%").replace("_", "\\_")
+                base_query = (
+                    "SELECT * FROM memory_index WHERE content LIKE ? ESCAPE '\\'"
+                )
+                params = [f"%{escaped}%"]
+                if wing:
+                    base_query += " AND wing = ?"
+                    params.append(wing)
+                if type:
+                    base_query += " AND type = ?"
+                    params.append(type)
+                base_query += " ORDER BY stored_at DESC LIMIT ?"
+                params.append(limit)
+        else:
+            base_query = "SELECT * FROM memory_index WHERE 1=1"
+            params = []
+            if wing:
+                base_query += " AND wing = ?"
+                params.append(wing)
+            if type:
+                base_query += " AND type = ?"
+                params.append(type)
+            base_query += " ORDER BY stored_at DESC LIMIT ?"
+            params.append(limit)
+
         try:
-            rows = self._conn.execute(query, params).fetchall()
+            rows = self._conn.execute(base_query, params).fetchall()
             return [self._row_to_dict(r) for r in rows]
         except Exception as e:
             logger.warning("L2 search failed: %s", e)
             raise
+
+    @staticmethod
+    def _escape_fts5(keyword: str) -> str:
+        """转义 FTS5 特殊字符，构造安全的 MATCH 查询。
+
+        FTS5 中需要转义的特殊字符：*  \"  -  (  ) 以及前后缀引号。
+        简单关键字直接包裹在双引号中作为短语查询。
+        """
+        # 简单处理：用双引号包裹作为短语匹配
+        # 先移除已有的双引号，再包裹
+        clean = keyword.replace('"', '')
+        return f'"{clean}"'
 
     def search_all_for_retrieval(self, limit: int = 1000) -> list[dict[str, Any]]:
         """获取所有记录（用于检索引擎全量索引）。"""

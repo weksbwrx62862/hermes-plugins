@@ -21,6 +21,23 @@ class TestOmniMemConfig(unittest.TestCase):
         self.assertEqual(config.get("retrieval_mode"), "rag")
         self.assertEqual(config.get("budget_tokens"), 4000)
 
+    def test_api_key_default_is_random_hex(self) -> None:
+        """api_key 默认值应为 32 字节随机 hex，禁止为空。"""
+        config = OmniMemConfig(Path(self.tmpdir))
+        api_key = config.get("api_key", "")
+        self.assertTrue(api_key)
+        self.assertEqual(len(bytes.fromhex(api_key)), 32)
+
+    def test_empty_api_key_is_rejected_and_regenerated(self) -> None:
+        """配置文件中显式设置空 api_key 时，应被强制重新生成。"""
+        config_dir = Path(self.tmpdir) / "empty_key"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        config = OmniMemConfig(config_dir)
+        config.save({"api_key": ""})
+        config2 = OmniMemConfig(config_dir)
+        self.assertTrue(config2.get("api_key"))
+        self.assertNotEqual(config2.get("api_key"), "")
+
     def test_set_and_get(self) -> None:
         config = OmniMemConfig(Path(self.tmpdir))
         config.set("custom_key", "custom_value")

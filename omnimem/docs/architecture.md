@@ -180,6 +180,24 @@ Mental Model (心智模型)
 - 每个 Shade 代表用户的一个"侧面"（如工作模式 vs 休闲模式）
 - 推理时动态加载对应 Shade 的 LoRA 权重
 
+### 2.3 模块映射（v2.0.0）
+
+第二轮修复后，核心大文件已按职责拆分。下表给出五层架构与主要模块的对应关系：
+
+| 层级 | 核心职责 | 主要模块 |
+|:---|:---|:---|
+| L0 感知层 | 信号检测、意图预测、系统注入过滤 | `perception/engine.py` |
+| L1 工作记忆 | CoreBlock、Token 预算、压缩附件 | `core/budget.py`、`core/block.py`、`context/manager.py` |
+| L2 结构化记忆 | 宫殿导航、双存储、三级索引 | `memory/wing_room.py`、`memory/drawer_closet.py`、`memory/index.py`、`memory/meta_store.py` |
+| L3 深层记忆 | 反思、升华、知识图谱 | `deep/reflect.py`、`deep/consolidation.py`、`deep/knowledge_graph.py` |
+| L4 内化记忆 | KV Cache、LoRA 分身 | `internalize/kv_cache.py`、`internalize/lora_trainer.py` |
+| Provider 层 | 生命周期、初始化、中间件、兼容代理 | `provider.py`（入口）、`core/provider_initializer.py`、`core/provider_lifecycle.py`、`core/provider_middleware.py`、`compat/provider_proxy.py` |
+| 检索层 | 多通道检索、RRF 融合、熔断、质量评估 | `retrieval/engine.py`（入口）、`retrieval/hybrid_orchestrator.py`、`retrieval/vector.py`、`retrieval/bm25.py`、`retrieval/circuit_breaker.py`、`retrieval/query_quality.py`、`retrieval/synonym_expander.py`、`retrieval/rw_lock.py`、`retrieval/registry.py` |
+| 抽象接口层 | 统一检索、嵌入、向量存储、锁契约 | `retrieval/base.py`、`embedding/base.py`、`storage/base.py`、`utils/lock.py` |
+| 治理层 | 隐私、遗忘、冲突、审计、同步 | `governance/privacy.py`、`governance/forgetting.py`、`governance/conflict.py`、`governance/audit_log.py`、`governance/sync.py` |
+
+> **设计原则**：抽象接口层向上为 Provider / Facade 提供稳定契约，向下由具体实现通过工厂函数与注册表按需装配；新增后端或检索通道时，通常无需修改核心引擎代码。
+
 ---
 
 ## 3. 系统总览图
@@ -488,14 +506,20 @@ class StorageFacade:
 
 | 子系统模块 | 文件路径 | 核心职责 |
 |:---|:---|:---|
-| HybridRetriever | `retrieval/engine.py` | 混合检索编排 |
-| VectorRetriever | `retrieval/vector.py` | ChromaDB 向量相似度检索 |
+| HybridRetriever | `retrieval/engine.py` | 混合检索编排 Facade（读写锁、通道装配） |
+| HybridOrchestrator | `retrieval/hybrid_orchestrator.py` | 多通道调度、RRF/additive 融合、缓存、索引重建 |
+| VectorRetriever | `retrieval/vector.py` | 向量相似度检索（依赖抽象 VectorStore） |
 | BM25Retriever | `retrieval/bm25.py` | BM25 关键词检索 |
+| SynonymExpander | `retrieval/synonym_expander.py` | 基于 synonyms.json 的查询扩展与结果去重合并 |
+| CircuitBreaker | `retrieval/circuit_breaker.py` | 向量检索失败熔断与恢复（CLOSED/OPEN/HALF_OPEN） |
+| QueryQuality | `retrieval/query_quality.py` | 垃圾查询检测、Token 预算裁剪 |
+| RWLock | `retrieval/rw_lock.py` | 公平读写锁（search 读锁 / add 写锁） |
 | RRFFuser | `retrieval/rrf.py` | 倒数排序融合 |
 | CrossEncoderReranker | `retrieval/reranker.py` | 二次重排序 |
+| RetrieverRegistry | `retrieval/registry.py` | 检索通道插件化注册表 |
 | ContextManager | `context/manager.py` | 精炼/去重/预算控制 |
-| VectorFactory | `retrieval/vector_factory.py` | 向量库实例工厂 |
-| VectorStore (ABC) | `retrieval/vector_store.py` | 向量库抽象接口 |
+| VectorFactory | `retrieval/vector_factory.py` | 向量库实例工厂（向后兼容） |
+| BaseRetriever (ABC) | `retrieval/base.py` | 检索通道统一抽象接口 |
 
 **公共接口**：
 ```python
@@ -582,6 +606,105 @@ class SyncFacade:
     async def resolve_sync_conflicts(self) -> list[Conflict]: ...
     async def get_sync_status(self) -> SyncStatus: ...
 ```
+
+### 5.6 抽象接口层（Abstract Interface Layer）
+
+为了支撑可插拔的 Embedding、VectorStore、检索通道与分布式锁，OmniMem v2.0.0 引入统一抽象接口层。所有具体实现通过工厂函数或注册表注入，核心引擎只依赖抽象契约。
+
+#### BaseRetriever（检索通道抽象）
+
+```python
+# retrieval/base.py
+class BaseRetriever(ABC):
+    @property
+    @abstractmethod
+    def name(self) -> str: ...
+
+    @abstractmethod
+    def search(self, query: str, **kwargs: Any) -> RetrievalResult: ...
+
+    async def asearch(self, query: str, **kwargs: Any) -> RetrievalResult:
+        return await asyncio.to_thread(self.search, query, **kwargs)
+```
+
+- `search` 为同步入口，保持与存量代码兼容。
+- `asearch` 默认在线程池中执行同步 `search`，子类可覆盖为原生异步实现。
+- `RetrievalResult` 统一包含 `results`、`scores`、`channel` 三个字段。
+
+#### EmbeddingProvider（嵌入服务抽象）
+
+```python
+# embedding/base.py
+class EmbeddingProvider(ABC):
+    @property
+    @abstractmethod
+    def dimension(self) -> int: ...
+
+    @property
+    @abstractmethod
+    def model_name(self) -> str: ...
+
+    @abstractmethod
+    def embed(self, texts: list[str]) -> list[list[float]]: ...
+
+    @abstractmethod
+    async def aembed(self, texts: list[str]) -> list[list[float]]: ...
+```
+
+- 调用方负责计算 embeddings，VectorStore 不再耦合具体嵌入模型。
+- 已实现：`SentenceTransformersProvider`、`OpenAIEmbeddingProvider`、`ONNXEmbeddingProvider`。
+
+#### VectorStore（向量存储抽象）
+
+```python
+# storage/base.py
+class VectorStore(ABC):
+    @abstractmethod
+    def add(
+        self,
+        ids: list[str],
+        embeddings: list[list[float]],
+        metadatas: list[dict[str, Any]],
+    ) -> None: ...
+
+    @abstractmethod
+    def search(
+        self,
+        query_embedding: list[float],
+        top_k: int,
+        filters: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]: ...
+
+    @abstractmethod
+    def delete(self, ids: list[str]) -> None: ...
+
+    @abstractmethod
+    def count(self) -> int: ...
+```
+
+- 已实现：`ChromaVectorStore`、`MilvusVectorStore`。
+- `retrieval/vector_store.py` 中的 `VectorStore` 保持向后兼容，最终迁移到 `storage/base.py` 新接口。
+
+#### LockProvider（锁抽象）
+
+```python
+# utils/lock.py
+class LockProvider(ABC):
+    @abstractmethod
+    def acquire(self) -> None: ...
+
+    @abstractmethod
+    def release(self) -> None: ...
+
+    @abstractmethod
+    def __enter__(self) -> LockProvider: ...
+
+    @abstractmethod
+    def __exit__(self, *args: Any) -> None: ...
+```
+
+- 已实现：`FileLockProvider`；Redis 后端可通过相同契约扩展。
+- `create_lock_provider(path, backend="file" | "redis")` 工厂函数按配置构造实例。
 
 ---
 
@@ -896,51 +1019,46 @@ class AuditEntry:
 
 ### 9.1 向量库抽象 (VectorStore)
 
+统一接口定义见 `storage/base.py`（v2.0.0 新增），`retrieval/vector_store.py` 中的接口保持向后兼容。
+
 ```python
-# retrieval/vector_store.py
+# storage/base.py
 class VectorStore(ABC):
-    """向量存储抽象接口，支持切换不同后端"""
+    """向量数据库抽象基类，调用方负责计算 embeddings。"""
 
     @abstractmethod
-    async def initialize(self, persist_dir: str, collection_name: str) -> None: ...
-
-    @abstractmethod
-    async def upsert(
+    def add(
         self,
         ids: list[str],
         embeddings: list[list[float]],
-        metadatas: list[dict] | None = None,
-        documents: list[str] | None = None,
+        metadatas: list[dict[str, Any]],
     ) -> None: ...
 
     @abstractmethod
-    async def query(
+    def search(
         self,
-        query_embeddings: list[list[float]] | None = None,
-        query_texts: list[str] | None = None,
-        n_results: int = 10,
-        where: dict | None = None,
-        where_document: dict | None = None,
-    ) -> list[dict]: ...
+        query_embedding: list[float],
+        top_k: int,
+        filters: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]: ...
 
     @abstractmethod
-    async def delete(self, ids: list[str] | None = None) -> None: ...
+    def delete(self, ids: list[str]) -> None: ...
 
     @abstractmethod
-    async def count(self) -> int: ...
-
-    @property
-    @abstractmethod
-    def name(self) -> str: ...
+    def count(self) -> int: ...
 ```
+
+**配置驱动选择**：通过 `vector_store.provider` 配置项切换后端，`create_vector_store(config)` 工厂函数负责实例化。
 
 **已实现的后端**：
 
-| 后端 | 类名 | 适用场景 |
-|:---|:---|:---|
-| ChromaDB | `ChromaVectorStore` | 默认，嵌入式，开发/中小规模 |
-| Qdrant | `QdrantVectorStore` | 大规模生产环境，高性能 |
-| FAISS | `FAISSVectorStore` | 纯内存，极速检索 |
+| 后端 | 类名 | 工厂识别名 | 适用场景 |
+|:---|:---|:---|:---|
+| ChromaDB | `ChromaVectorStore` | `chroma` | 默认，嵌入式，开发/中小规模 |
+| Milvus | `MilvusVectorStore` | `milvus` | 大规模生产环境，高性能 |
+| Qdrant（兼容层） | `QdrantStore` | `qdrant` | 通过 `retrieval/vector_factory.py` 保留 |
+| FAISS（兼容层） | `FAISSStore` | `faiss` | 通过 `retrieval/vector_factory.py` 保留 |
 
 ### 9.2 LLM 后端抽象 (LLMBackend)
 
@@ -1044,9 +1162,25 @@ default_privacy: personal          # 默认隐私级别
 
 # ===== 检索配置 =====
 retrieval_mode: rag                # 默认检索模式: rag / llm
-vector_backend: chromadb           # 向量数据库后端
+recall_strategy: hybrid            # 召回策略: hybrid / keyword / embedding
+recall_timeout_ms: 5000            # 单通道检索超时（毫秒）
+vector_backend: chromadb           # 向后兼容：向量数据库后端
+vector_store:                      # 向量存储后端配置（v2.0.0 推荐）
+  provider: chroma                 # chroma / milvus
+  collection_name: omnimem
+  persist_dir: /tmp/omnimem/storage/chroma
+  embedding_dimension: 384
+embedding:                         # Embedding Provider 配置（v2.0.0 推荐）
+  provider: sentence_transformers  # sentence_transformers / openai / onnx
+  model_name: all-MiniLM-L6-v2
+  api_key: ""                      # OpenAI 时使用
+  base_url: ""                     # 兼容 OpenAI 代理时使用
+lock:                              # 分布式锁配置（v2.0.0）
+  backend: file                    # file / redis
+  redis_url: redis://localhost:6379/0
 max_prefetch_tokens: 300           # 最大预取 token 数
 enable_reranker: false             # Cross-Encoder 重排序开关
+rrf_k: 60                          # RRF 融合平滑常数
 
 # ===== 工作记忆配置 =====
 budget_tokens: 4000                # 工作记忆 Token 预算
@@ -1087,7 +1221,6 @@ audit_log_retention_days: 90       # 审计日志保留天数
 llm_provider: openai               # LLM 提供商
 llm_api_key: ${OPENAI_API_KEY}     # API Key（支持环境变量）
 llm_model: gpt-4o-mini             # 默认模型
-embedding_model: text-embedding-3-small  # 嵌入模型
 llm_temperature: 0.7               # 生成温度
 llm_max_tokens: 2048               # 最大生成 token
 ```
@@ -1108,7 +1241,44 @@ llm_max_tokens: 2048               # 最大生成 token
 最低优先级
 ```
 
-### 10.3 热重载机制
+### 10.3 配置驱动的 Provider / VectorStore 选择
+
+OmniMem v2.0.0 通过配置项决定具体使用哪种 Embedding Provider、VectorStore 与锁后端，核心引擎不硬编码实现类。
+
+**工厂函数**：
+
+| 工厂函数 | 模块 | 选择配置 | 说明 |
+|:---|:---|:---|:---|
+| `create_embedding_provider(config)` | `embedding/__init__.py` | `embedding.provider` | 返回 `EmbeddingProvider` 子类实例 |
+| `create_vector_store(config)` | `storage/__init__.py` | `vector_store.provider` | 返回 `VectorStore` 子类实例 |
+| `create_lock_provider(path, backend)` | `utils/lock.py` | `lock.backend` | 返回 `LockProvider` 子类实例 |
+
+**选择流程**：
+
+```
+配置文件 (config.yaml)
+        │
+        ▼
+OmniMemConfig._flatten_dict()  # 嵌套 YAML 展平为点分键
+        │
+        ▼
+读取 embedding.provider / vector_store.provider / lock.backend
+        │
+        ▼
+工厂函数按名称实例化对应后端
+        │
+        ▼
+注入到 Provider / Facade / Retriever 中使用
+```
+
+**扩展示例**：新增自定义 VectorStore 时，只需：
+1. 实现 `storage/base.py` 中的 `VectorStore` 接口；
+2. 在 `storage/__init__.py` 的 `create_vector_store` 中注册识别名；
+3. 在 `config.yaml` 中设置 `vector_store.provider: my_backend`。
+
+无需修改 `retrieval/vector.py` 或 `HybridRetriever` 的核心逻辑。
+
+### 10.4 热重载机制
 
 - 每 10 轮自动检查配置文件变更
 - 支持手动触发：`provider._config.reload()`

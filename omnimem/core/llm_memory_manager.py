@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
@@ -145,10 +145,10 @@ class LLMMemoryManager:
         self._llm_timeout = 10.0
         self._llm_max_tokens = 400
         if config:
-            self._max_candidates = getattr(config, "get", lambda k, d: d)("llm_memory_max_candidates", 5)
-            self._max_content_length = getattr(config, "get", lambda k, d: d)("llm_memory_max_content_length", 500)
-            self._llm_timeout = getattr(config, "get", lambda k, d: d)("llm_memory_timeout", 10.0)
-            self._llm_max_tokens = getattr(config, "get", lambda k, d: d)("llm_memory_max_tokens", 400)
+            self._max_candidates = getattr(config, "get", lambda _k, d: d)("llm_memory_max_candidates", 5)
+            self._max_content_length = getattr(config, "get", lambda _k, d: d)("llm_memory_max_content_length", 500)
+            self._llm_timeout = getattr(config, "get", lambda _k, d: d)("llm_memory_timeout", 10.0)
+            self._llm_max_tokens = getattr(config, "get", lambda _k, d: d)("llm_memory_max_tokens", 400)
 
     @property
     def is_available(self) -> bool:
@@ -267,7 +267,7 @@ class LLMMemoryManager:
             data = json.loads(json_str)
         except json.JSONDecodeError as e:
             logger.warning("LLMMemoryManager: JSON 解析失败 (%s)，原始响应: %s", e, llm_response[:200])
-            return MemoryDecision(action=MemoryAction.ADD, reason=f"JSON 解析失败，默认新增")
+            return MemoryDecision(action=MemoryAction.ADD, reason="JSON 解析失败，默认新增")
 
         action_str = data.get("action", "ADD").upper()
         try:

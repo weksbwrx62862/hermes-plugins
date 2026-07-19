@@ -256,7 +256,7 @@ class DistillationEngine:
                                 facts.append(str(content).strip())
                     return facts
             except (json.JSONDecodeError, ValueError):
-                pass
+                logger.debug("Distillation: JSON parse of LLM facts output failed", exc_info=True)
 
         # 解析为行列表
         for line in raw.split("\n"):

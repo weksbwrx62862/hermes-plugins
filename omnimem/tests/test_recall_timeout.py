@@ -4,10 +4,7 @@ from __future__ import annotations
 
 import time
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 
 class TestRecallTimeoutDegradation:
@@ -17,7 +14,7 @@ class TestRecallTimeoutDegradation:
         """创建 HybridRetriever 实例（mock 向量和 BM25）。"""
         from omnimem.retrieval.engine import HybridRetriever
 
-        with patch.object(HybridRetriever, "__init__", lambda self, **kw: None):
+        with patch.object(HybridRetriever, "__init__", lambda _self, **_kw: None):
             retriever = HybridRetriever.__new__(HybridRetriever)
             retriever._recall_timeout_ms = kwargs.get("recall_timeout_ms", 5000)
             retriever._recall_strategy = kwargs.get("recall_strategy", "hybrid")
@@ -33,7 +30,7 @@ class TestRecallTimeoutDegradation:
         """默认超时应为 5000ms，策略为 hybrid。"""
         from omnimem.retrieval.engine import HybridRetriever
 
-        with patch.object(HybridRetriever, "__init__", lambda self, **kw: None):
+        with patch.object(HybridRetriever, "__init__", lambda _self, **_kw: None):
             r = HybridRetriever.__new__(HybridRetriever)
             # 模拟实际 __init__ 的默认值
             r._recall_timeout_ms = 5000
@@ -45,7 +42,7 @@ class TestRecallTimeoutDegradation:
         """自定义超时和策略应正确传递。"""
         from omnimem.retrieval.engine import HybridRetriever
 
-        with patch.object(HybridRetriever, "__init__", lambda self, **kw: None):
+        with patch.object(HybridRetriever, "__init__", lambda _self, **_kw: None):
             r = HybridRetriever.__new__(HybridRetriever)
             r._recall_timeout_ms = 3000
             r._recall_strategy = "keyword"
@@ -60,7 +57,7 @@ class TestRecallTimeoutDegradation:
         retriever._rrf_fuse = MagicMock(return_value=[{"memory_id": "1"}])
         retriever._is_garbage_query = MagicMock(return_value=False)
         retriever._vector = MagicMock(count=MagicMock(return_value=10))
-        retriever._supplement_low_recall_types = MagicMock(side_effect=lambda q, r, k: r)
+        retriever._supplement_low_recall_types = MagicMock(side_effect=lambda _q, r, _k: r)
         retriever._apply_type_boost = MagicMock(side_effect=lambda r: r)
         retriever._rw_lock = MagicMock()
 
@@ -80,7 +77,7 @@ class TestRecallTimeoutDegradation:
     def test_timeout_returns_empty(self):
         """超时后应返回空结果，不阻塞。"""
         # 模拟一个超时的搜索
-        def slow_search(query, top_k):
+        def slow_search(_query, _top_k):
             time.sleep(10)  # 远超超时时间
             return [{"memory_id": "1"}]
 
@@ -97,7 +94,6 @@ class TestRecallTimeoutDegradation:
 
     def test_single_channel_vector_empty_weights(self):
         """向量通道为空时，权重应为 [0.0, 1.0]。"""
-        from omnimem.retrieval.engine import RRFFusion
 
         # 验证单通道降级逻辑
         vector_results = []

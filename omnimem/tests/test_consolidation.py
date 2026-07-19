@@ -2,16 +2,14 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import pytest
-
 from omnimem.deep.consolidation import (
+    ConsolidatedItem,
     ConsolidationEngine,
     ConsolidationResult,
-    ConsolidatedItem,
-    _extract_keywords,
     _cluster_by_topic,
-    _generate_observation,
+    _extract_keywords,
     _generate_mental_model,
+    _generate_observation,
 )
 
 

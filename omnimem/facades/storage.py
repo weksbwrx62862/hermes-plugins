@@ -41,6 +41,7 @@ class StorageFacade:
         self._store = DrawerClosetStore(
             self._data_dir / "palace",
             write_buffer_threshold=self._config.get("write_buffer_threshold", 20),
+            config=self._config,
         )
         self._index = ThreeLevelIndex(self._data_dir / "index")
         self._md_store = MarkdownStore(self._data_dir / "palace")

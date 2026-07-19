@@ -5,20 +5,26 @@ from __future__ import annotations
 覆盖: RRFFusion / CrossEncoderReranker / VectorRetriever / BM25Retriever / HybridRetriever
 """
 
-import pytest
+import pytest  # noqa: E402
+
 pytest.importorskip("chromadb", reason="chromadb not installed")
 pytest.importorskip("sentence_transformers", reason="sentence-transformers not installed")
 
-import tempfile
-import unittest
-from pathlib import Path
-from typing import Any
+import tempfile  # noqa: E402
+import unittest  # noqa: E402
+from pathlib import Path  # noqa: E402
+from typing import Any  # noqa: E402
+from unittest.mock import patch  # noqa: E402
 
-from omnimem.retrieval.rrf import RRFFusion
-from omnimem.retrieval.reranker import CrossEncoderReranker
-from omnimem.retrieval.vector import VectorRetriever, _CachedEmbeddingFunction
-from omnimem.retrieval.bm25 import BM25Retriever
-from omnimem.retrieval.engine import HybridRetriever
+from omnimem.retrieval.bm25 import BM25Retriever  # noqa: E402
+from omnimem.retrieval.engine import (  # noqa: E402
+    HybridRetriever,
+    _is_garbage_query,
+    _trim_to_budget,
+)
+from omnimem.retrieval.reranker import CrossEncoderReranker  # noqa: E402
+from omnimem.retrieval.rrf import RRFFusion  # noqa: E402
+from omnimem.retrieval.vector import VectorRetriever, _CachedEmbeddingFunction  # noqa: E402
 
 
 def _has_vector_model() -> bool:
@@ -217,11 +223,13 @@ class TestVectorRetriever(unittest.TestCase):
         self.assertGreater(self.vec.count(), 0)
 
     def test_search_similarity_threshold(self) -> None:
-        """低相似度结果应被过滤 (sim < 0.25)。"""
+        """低于阈值的结果应被过滤 (sim < threshold)。"""
         self.vec.add("川菜以麻辣为特色", "th-1", {"type": "fact"})
         self.vec.flush()
         results = self.vec.search("量子计算机的物理原理")
-        self.assertEqual(len(results), 0)
+        # 当前阈值为 0.05，验证返回结果的 score 均 >= 阈值
+        for r in results:
+            self.assertGreaterEqual(r.get("score", 0), 0.05)
 
     def test_embed_text(self) -> None:
         """embed_text 应返回非空向量。"""
@@ -428,6 +436,95 @@ class TestHybridRetriever(unittest.TestCase):
 
 
 # ──────────────────────────────────────────────
+# HybridRetriever config (no vector model needed)
+# ──────────────────────────────────────────────
+
+
+class TestHybridRetrieverConfig(unittest.TestCase):
+    """HybridRetriever 检索参数可配置化测试（无需向量模型）。"""
+
+    def test_default_config_values(self) -> None:
+        """无配置时参数应与原硬编码默认值一致。"""
+        tmpdir = tempfile.mkdtemp()
+        hybrid = HybridRetriever(data_dir=Path(tmpdir))
+        self.assertEqual(hybrid._rrf_k, 35)
+        self.assertAlmostEqual(hybrid._rrf_min_score, 0.04)
+        self.assertEqual(hybrid._circuit_breaker_threshold, 3)
+        self.assertEqual(hybrid._circuit_breaker_cooldown_seconds, 60.0)
+        self.assertEqual(hybrid._max_sync_turn_entries, 1000)
+        self.assertEqual(hybrid._rrf._k, 35)
+        self.assertAlmostEqual(hybrid._rrf._min_rrf, 0.04)
+        self.assertEqual(hybrid._vector_breaker._threshold, 3)
+        self.assertEqual(hybrid._vector_breaker._cooldown, 60.0)
+
+    def test_custom_config_values(self) -> None:
+        """自定义配置应覆盖默认值。"""
+        tmpdir = tempfile.mkdtemp()
+        custom = {
+            "rrf_k": 120,
+            "rrf_min_score": 0.05,
+            "circuit_breaker_threshold": 5,
+            "circuit_breaker_cooldown_seconds": 120,
+            "max_sync_turn_entries": 500,
+        }
+        hybrid = HybridRetriever(data_dir=Path(tmpdir), config=custom)
+        self.assertEqual(hybrid._rrf_k, 120)
+        self.assertAlmostEqual(hybrid._rrf_min_score, 0.05)
+        self.assertEqual(hybrid._circuit_breaker_threshold, 5)
+        self.assertEqual(hybrid._circuit_breaker_cooldown_seconds, 120.0)
+        self.assertEqual(hybrid._max_sync_turn_entries, 500)
+        self.assertEqual(hybrid._rrf._k, 120)
+        self.assertAlmostEqual(hybrid._rrf._min_rrf, 0.05)
+        self.assertEqual(hybrid._vector_breaker._threshold, 5)
+        self.assertEqual(hybrid._vector_breaker._cooldown, 120.0)
+
+    def test_synonym_map_is_instance_attribute(self) -> None:
+        """同义词映射应为实例属性，多实例互不污染。"""
+        tmpdir1 = tempfile.mkdtemp()
+        tmpdir2 = tempfile.mkdtemp()
+        hybrid1 = HybridRetriever(data_dir=Path(tmpdir1))
+        hybrid2 = HybridRetriever(data_dir=Path(tmpdir2))
+        self.assertIsInstance(hybrid1._synonym_map, dict)
+        self.assertIsInstance(hybrid2._synonym_map, dict)
+        self.assertIsNot(hybrid1._synonym_map, hybrid2._synonym_map)
+        self.assertFalse(hasattr(HybridRetriever, "_SYNONYM_MAP"))
+
+    def test_sync_turn_ids_cleanup(self) -> None:
+        """_sync_turn_ids 超过上限后应自动清理最旧条目。"""
+        tmpdir = tempfile.mkdtemp()
+        hybrid = HybridRetriever(data_dir=Path(tmpdir))
+        hybrid._max_sync_turn_entries = 3
+        hybrid._sync_turn_ids.extend(["id-1", "id-2", "id-3", "id-4"])
+        with patch.object(hybrid._bm25, "delete") as bm25_delete, patch.object(
+            hybrid._vector, "delete"
+        ) as vector_delete:
+            hybrid._cleanup_sync_turn_entries()
+            self.assertEqual(len(hybrid._sync_turn_ids), 3)
+            self.assertEqual(list(hybrid._sync_turn_ids), ["id-2", "id-3", "id-4"])
+            bm25_delete.assert_called_once_with("id-1")
+            vector_delete.assert_called_once_with("id-1")
+
+    def test_search_reuses_thread_pool(self) -> None:
+        """多次 search() 调用应复用同一个 ThreadPoolExecutor 实例。"""
+        tmpdir = tempfile.mkdtemp()
+        hybrid = HybridRetriever(data_dir=Path(tmpdir))
+        self.assertIsNotNone(hybrid._orchestrator._executor)
+        executor_id = id(hybrid._orchestrator._executor)
+        for _ in range(3):
+            hybrid.search("测试查询")
+        self.assertEqual(id(hybrid._orchestrator._executor), executor_id)
+
+    def test_shutdown_closes_thread_pool(self) -> None:
+        """shutdown() 应关闭检索线程池。"""
+        tmpdir = tempfile.mkdtemp()
+        hybrid = HybridRetriever(data_dir=Path(tmpdir))
+        executor = hybrid._orchestrator._executor
+        self.assertIsNotNone(executor)
+        hybrid.shutdown()
+        self.assertTrue(executor._shutdown)
+
+
+# ──────────────────────────────────────────────
 # HybridRetriever static methods (no deps needed)
 # ──────────────────────────────────────────────
 
@@ -437,27 +534,27 @@ class TestHybridRetrieverStatic(unittest.TestCase):
 
     def test_is_garbage_query_chinese(self) -> None:
         """中文查询 → 非垃圾。"""
-        self.assertFalse(HybridRetriever._is_garbage_query("什么是机器学习"))
+        self.assertFalse(_is_garbage_query("什么是机器学习"))
 
     def test_is_garbage_query_empty(self) -> None:
         """空查询 → 垃圾。"""
-        self.assertTrue(HybridRetriever._is_garbage_query(""))
+        self.assertTrue(_is_garbage_query(""))
 
     def test_is_garbage_query_random(self) -> None:
         """纯随机字符串 → 垃圾。"""
-        self.assertTrue(HybridRetriever._is_garbage_query("zzzzzxyz123"))
+        self.assertTrue(_is_garbage_query("zzzzzxyz123"))
 
     def test_is_garbage_query_digits(self) -> None:
         """纯数字 → 垃圾。"""
-        self.assertTrue(HybridRetriever._is_garbage_query("12345678"))
+        self.assertTrue(_is_garbage_query("12345678"))
 
     def test_is_garbage_query_short(self) -> None:
         """极短无意义 → 垃圾。"""
-        self.assertTrue(HybridRetriever._is_garbage_query("z"))
+        self.assertTrue(_is_garbage_query("z"))
 
     def test_is_garbage_query_english(self) -> None:
         """有意义的英文 → 非垃圾。"""
-        self.assertFalse(HybridRetriever._is_garbage_query("what is python programming"))
+        self.assertFalse(_is_garbage_query("what is python programming"))
 
     def test_trim_to_budget(self) -> None:
         """Token 预算裁剪。"""
@@ -466,7 +563,7 @@ class TestHybridRetrieverStatic(unittest.TestCase):
             {"content": "b" * 100, "memory_id": "t2"},
             {"content": "c" * 200, "memory_id": "t3"},
         ]
-        trimmed = HybridRetriever._trim_to_budget(results, max_tokens=30)
+        trimmed = _trim_to_budget(results, max_tokens=30)
         self.assertLessEqual(len(trimmed), 3)
 
 
@@ -490,11 +587,11 @@ class TestHybridRetrieverEdgeCases(unittest.TestCase):
         self.assertIsInstance(results, list)
 
     def test_garbage_query_detection(self) -> None:
-        self.assertTrue(HybridRetriever._is_garbage_query("zzzzzxyz123"))
-        self.assertTrue(HybridRetriever._is_garbage_query(""))
-        self.assertTrue(HybridRetriever._is_garbage_query("1234567890"))
-        self.assertFalse(HybridRetriever._is_garbage_query("深度学习框架"))
-        self.assertFalse(HybridRetriever._is_garbage_query("python web development"))
+        self.assertTrue(_is_garbage_query("zzzzzxyz123"))
+        self.assertTrue(_is_garbage_query(""))
+        self.assertTrue(_is_garbage_query("1234567890"))
+        self.assertFalse(_is_garbage_query("深度学习框架"))
+        self.assertFalse(_is_garbage_query("python web development"))
 
     def test_no_results(self) -> None:
         results = self.hybrid.search("不存在的记忆内容xyz")

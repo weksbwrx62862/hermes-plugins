@@ -28,6 +28,10 @@ class ConflictResult:
     conflict_type: str = ""  # "negation" / "semantic_contradiction" / "update" / "duplicate"
     action: str = "accept"  # "accept" / "reject" / "merge"
     reason: str = ""
+    # ★ 知识更新标记（Task 2）
+    is_updated: bool = False       # 新记忆是更新版本
+    is_superseded: bool = False    # 旧记忆已被取代
+    superseded_id: str = ""        # 被取代的旧记忆 ID
 
 
 class ConflictResolver:
@@ -160,12 +164,26 @@ class ConflictResolver:
         if self._strategy == "latest":
             conflict.action = "accept"
             conflict.reason = "Latest memory takes priority"
+        elif self._strategy == "add_only":
+            # ★ ADD-only 策略：新记忆直接写入，旧记忆不标记 superseded
+            # 检索层保留所有记忆，由 LLM 合成或排序决定使用哪条
+            conflict.action = "accept"
+            conflict.is_updated = False
+            conflict.is_superseded = False
+            conflict.superseded_id = ""
+            conflict.reason = "ADD-only: both memories retained, retrieval decides relevance"
         elif self._strategy == "confidence":
             conflict.action = "accept"
             conflict.reason = "Resolved by confidence comparison"
         elif self._strategy == "manual":
             conflict.action = "accept"
             conflict.reason = "Auto-accepted (manual mode would defer to user)"
+
+        # ★ Task 2: 知识更新冲突时设置标记（add_only 模式除外）
+        if self._strategy != "add_only" and conflict.conflict_type == "update":
+            conflict.is_updated = True
+            conflict.is_superseded = True
+            conflict.superseded_id = conflict.existing_id
 
         # 记录冲突（★ 包含 memory_id，供 resolve_by_id 查询）
         self._conflict_log.append(

@@ -1,0 +1,9 @@
+name: gateway-restart
+version: 1.0.0
+description: "允许从 Gateway 内部执行 `hermes gateway restart`。通过 monkey-patch 实现，Hermes 更新后仍有效。将 restart 命令重定向至 SIGUSR1 优雅重启路径（与 /restart 斜杠命令等效）。"
+kind: backend
+author: xxh
+hermes_compat: ">=2.0.0"
+phase: LATE
+provides_hooks: []
+provides_tools: []

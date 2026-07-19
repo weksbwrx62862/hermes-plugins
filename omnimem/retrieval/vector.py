@@ -10,16 +10,19 @@ from __future__ import annotations
 import hashlib
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
+from omnimem.embedding.base import EmbeddingProvider
+from omnimem.embedding.sentence_transformers_provider import SentenceTransformersProvider
+from omnimem.retrieval.base import RetrievalResult
+from omnimem.retrieval.vector_factory import create_vector_store
 from omnimem.retrieval.vector_store import (
     ChromaDBStore,
-    VectorStore,
     _CachedEmbeddingFunction,
     _emit,
 )
-from omnimem.retrieval.vector_factory import create_vector_store
 
 logger = logging.getLogger(__name__)
 
@@ -27,14 +30,37 @@ logger = logging.getLogger(__name__)
 class VectorRetriever:
     """向量检索，委托 VectorStore 抽象接口。"""
 
-    def __init__(self, backend: str = "chromadb", data_dir: Path | None = None, embedding_model_path: str = ""):
+    def __init__(
+        self,
+        backend: str = "chromadb",
+        data_dir: Path | None = None,
+        embedding_model_path: str = "",
+        embedding_provider: EmbeddingProvider | None = None,
+        vector_store: Any | None = None,
+    ):
         self._backend = backend
         self._data_dir = data_dir or Path("/tmp/omnimem/retrieval")
-        self._store: VectorStore | None = None
+        self._store: Any | None = None
         self._initialized = False
         self._embedding_fn: Any = None
+        self._embedding_provider: EmbeddingProvider | None = None
         self._encoder = None
         self._embedding_model_path = embedding_model_path
+        # 新 VectorStore 后端下记录分块 ID，用于删除
+        self._chunk_ids: dict[str, list[str]] = {}
+
+        if vector_store is not None:
+            self._store = vector_store
+            self._is_new_store = self._detect_new_store(vector_store)
+            self._initialized = True
+            if self._is_new_store:
+                self._embedding_provider = embedding_provider or self._default_embedding_provider()
+        else:
+            self._is_new_store = False
+            if embedding_provider is not None:
+                # 显式传入了 provider 但未传入 store：保留旧式 store，provider 暂不使用
+                logger.debug("embedding_provider ignored when vector_store is not provided")
+
         try:
             import tiktoken
 
@@ -42,40 +68,97 @@ class VectorRetriever:
         except ImportError:
             pass
 
+    @staticmethod
+    def _detect_new_store(store: Any) -> bool:
+        """通过 duck typing 判断 store 是否为新 storage/base.py 接口。"""
+        return hasattr(store, "search") and not hasattr(store, "query")
+
+    def _default_embedding_provider(self) -> EmbeddingProvider:
+        return SentenceTransformersProvider(model_path=self._embedding_model_path)
+
+    @property
+    def name(self) -> str:
+        """检索通道名称（兼容 BaseRetriever 接口）。"""
+        return "vector"
+
+    def search_sync(self, query: str, **kwargs: Any) -> RetrievalResult:
+        """同步检索，返回统一 RetrievalResult（兼容 BaseRetriever）。"""
+        top_k = kwargs.get("top_k", 10)
+        results = self.search(query, top_k=top_k)
+        scores = [float(r.get("score", 0.0)) for r in results]
+        return RetrievalResult(results=results, scores=scores, channel=self.name)
+
+    async def asearch(self, query: str, **kwargs: Any) -> RetrievalResult:
+        """异步检索（兼容 BaseRetriever）。
+
+        优先使用 VectorStore 的 asearch 异步接口；否则在线程池中执行同步 search。
+        """
+        import asyncio
+
+        self._ensure_initialized()
+        if self._store is None:
+            return RetrievalResult(results=[], scores=[], channel=self.name)
+
+        top_k = kwargs.get("top_k", 10)
+
+        # 新 VectorStore 接口且支持异步搜索时，使用异步路径
+        if self._is_new_store and hasattr(self._store, "asearch"):
+            if self._embedding_provider is None:
+                return RetrievalResult(results=[], scores=[], channel=self.name)
+            try:
+                query_embeddings = await self._embedding_provider.aembed([query])
+                results = await self._store.asearch(
+                    query_embedding=query_embeddings[0], top_k=top_k
+                )
+                output = self._post_process_new_store_results(results)
+                scores = [float(r.get("score", 0.0)) for r in output]
+                return RetrievalResult(results=output, scores=scores, channel=self.name)
+            except Exception as e:
+                logger.warning("Vector async search (new store) failed, fallback to thread: %s", e)
+
+        return await asyncio.to_thread(self.search_sync, query, **kwargs)
+
     def _ensure_initialized(self) -> None:
-        if self._initialized:
+        if self._initialized and self._store is not None:
             return
         self._data_dir.mkdir(parents=True, exist_ok=True)
-        if self._backend == "faiss":
-            from omnimem.retrieval.faiss_store import FAISSStore
-            try:
-                cache_path = self._data_dir / "embedding_cache.json"
-                self._embedding_fn = _CachedEmbeddingFunction(cache_path=cache_path, model_path=self._embedding_model_path)
-            except Exception as e:
-                logger.warning("Failed to create CachedEmbeddingFunction for faiss: %s, using default", e)
-                self._embedding_fn = None
-            self._store = FAISSStore(
-                persist_dir=self._data_dir / "faiss",
-                embedding_fn=self._embedding_fn,
-            )
-        elif self._backend == "chromadb":
-            try:
-                cache_path = self._data_dir / "embedding_cache.json"
-                self._embedding_fn = _CachedEmbeddingFunction(cache_path=cache_path, model_path=self._embedding_model_path)
-            except Exception as e:
-                logger.warning("Failed to create CachedEmbeddingFunction: %s, using default", e)
-                self._embedding_fn = None
-            self._store = ChromaDBStore(
-                collection_name="omnimem",
-                persist_dir=self._data_dir / "chroma",
-                embedding_fn=self._embedding_fn,
-            )
-        else:
-            self._store = create_vector_store(
-                backend=self._backend,
-                persist_dir=self._data_dir / "chroma",
-                data_dir=self._data_dir / "chroma",
-            )
+        if self._store is None:
+            self._is_new_store = False
+            if self._backend == "faiss":
+                from omnimem.retrieval.faiss_store import FAISSStore
+
+                try:
+                    cache_path = self._data_dir / "embedding_cache.json"
+                    self._embedding_fn = _CachedEmbeddingFunction(
+                        cache_path=cache_path, model_path=self._embedding_model_path
+                    )
+                except Exception as e:
+                    logger.warning("Failed to create CachedEmbeddingFunction for faiss: %s, using default", e)
+                    self._embedding_fn = None
+                self._store = FAISSStore(
+                    persist_dir=self._data_dir / "faiss",
+                    embedding_fn=self._embedding_fn,
+                )
+            elif self._backend == "chromadb":
+                try:
+                    cache_path = self._data_dir / "embedding_cache.json"
+                    self._embedding_fn = _CachedEmbeddingFunction(
+                        cache_path=cache_path, model_path=self._embedding_model_path
+                    )
+                except Exception as e:
+                    logger.warning("Failed to create CachedEmbeddingFunction: %s, using default", e)
+                    self._embedding_fn = None
+                self._store = ChromaDBStore(
+                    collection_name="omnimem",
+                    persist_dir=self._data_dir / "chroma",
+                    embedding_fn=self._embedding_fn,
+                )
+            else:
+                self._store = create_vector_store(
+                    backend=self._backend,
+                    persist_dir=self._data_dir / "chroma",
+                    data_dir=self._data_dir / "chroma",
+                )
         self._initialized = True
 
     _CHUNK_SIZE = 500
@@ -84,10 +167,17 @@ class VectorRetriever:
     def add(self, content: str, memory_id: str, metadata: dict[str, Any]) -> None:
         self._add_single(content, memory_id, metadata)
 
-    def add_batch(self, documents: list[dict[str, Any]]) -> None:
-        self._ensure_initialized()
-        if self._store is None:
-            return
+    def _build_batch_entries(
+        self, documents: list[dict[str, Any]], include_content: bool = False
+    ) -> tuple[list[str], list[str], list[dict[str, str]]]:
+        """统一构建批量写入所需的 ids、documents 和 metadatas。
+
+        处理逻辑：
+        - 跳过 content 或 memory_id 为空的条目
+        - 将除 content、memory_id 外的字段转为 str 类型的 metadata，None 跳过
+        - metadata 为空时自动添加 `_default: "1"` 以满足 ChromaDB 非空要求
+        - 长文本按 _CHUNK_SIZE / _CHUNK_OVERLAP 拆分，并为每个 chunk 生成独立 ID
+        """
         all_ids: list[str] = []
         all_docs: list[str] = []
         all_metas: list[dict[str, str]] = []
@@ -96,22 +186,41 @@ class VectorRetriever:
             memory_id = doc.get("memory_id", "")
             if not content or not memory_id:
                 continue
-            meta = {
+            meta: dict[str, str] = {
                 k: str(v)
                 for k, v in doc.items()
                 if k not in ("content", "memory_id") and v is not None
             }
+            # ChromaDB 要求 metadata 非空
+            if not meta:
+                meta["_default"] = "1"
             if len(content) > self._CHUNK_SIZE:
                 chunks = self._split_chunks(content, self._CHUNK_SIZE, self._CHUNK_OVERLAP)
                 for i, chunk in enumerate(chunks):
                     chunk_hash = hashlib.md5(chunk.encode()).hexdigest()[:8]
-                    all_ids.append(f"{memory_id}_chunk{chunk_hash}")
+                    chunk_id = f"{memory_id}_chunk{chunk_hash}"
+                    all_ids.append(chunk_id)
                     all_docs.append(chunk)
-                    all_metas.append(dict(meta, _parent_id=memory_id, _chunk_idx=str(i)))
+                    chunk_meta = dict(meta, _parent_id=memory_id, _chunk_idx=str(i))
+                    if include_content:
+                        chunk_meta["content"] = chunk
+                    all_metas.append(chunk_meta)
             else:
                 all_ids.append(memory_id)
                 all_docs.append(content)
+                if include_content:
+                    meta["content"] = content
                 all_metas.append(meta)
+        return all_ids, all_docs, all_metas
+
+    def add_batch(self, documents: list[dict[str, Any]]) -> None:
+        self._ensure_initialized()
+        if self._store is None:
+            return
+        if self._is_new_store:
+            self._add_batch_new(documents)
+            return
+        all_ids, all_docs, all_metas = self._build_batch_entries(documents)
         if not all_ids:
             return
         try:
@@ -119,36 +228,39 @@ class VectorRetriever:
         except Exception as e:
             logger.warning("Vector add_batch failed: %s", e)
 
+    def _add_batch_new(self, documents: list[dict[str, Any]]) -> None:
+        """新 VectorStore 接口批量写入路径：调用方预计算 embeddings。"""
+        if self._embedding_provider is None or self._store is None:
+            return
+        all_ids, all_docs, all_metas = self._build_batch_entries(documents, include_content=True)
+        if not all_ids:
+            return
+        try:
+            embeddings = self._embedding_provider.embed(all_docs)
+            self._store.add(ids=all_ids, embeddings=embeddings, metadatas=all_metas)
+            self._record_chunk_ids(all_ids, all_metas)
+        except Exception as e:
+            logger.warning("Vector add_batch (new store) failed: %s", e)
+
+    def _record_chunk_ids(self, ids: list[str], metadatas: list[dict[str, str]]) -> None:
+        """记录分块 ID 与父文档的映射，便于删除时清理。"""
+        for doc_id, meta in zip(ids, metadatas, strict=False):
+            parent_id = meta.get("_parent_id", "")
+            if parent_id:
+                self._chunk_ids.setdefault(parent_id, []).append(doc_id)
+
     def add_batch_optimized(self, entries: list[dict[str, Any]]) -> None:
         self._ensure_initialized()
         if self._store is None:
             return
-        all_ids: list[str] = []
-        all_docs: list[str] = []
-        all_metas: list[dict[str, str]] = []
-        for entry in entries:
-            content = entry.get("content", "")
-            memory_id = entry.get("memory_id", "")
-            if not content or not memory_id:
-                continue
-            meta = {
-                k: str(v)
-                for k, v in entry.items()
-                if k not in ("content", "memory_id") and v is not None
-            }
-            if len(content) > self._CHUNK_SIZE:
-                chunks = self._split_chunks(content, self._CHUNK_SIZE, self._CHUNK_OVERLAP)
-                for i, chunk in enumerate(chunks):
-                    chunk_hash = hashlib.md5(chunk.encode()).hexdigest()[:8]
-                    all_ids.append(f"{memory_id}_chunk{chunk_hash}")
-                    all_docs.append(chunk)
-                    all_metas.append(dict(meta, _parent_id=memory_id, _chunk_idx=str(i)))
-            else:
-                all_ids.append(memory_id)
-                all_docs.append(content)
-                all_metas.append(meta)
+        if self._is_new_store:
+            # 新接口本身已要求预计算 embeddings，无需额外优化分支
+            self._add_batch_new(entries)
+            return
+        all_ids, all_docs, all_metas = self._build_batch_entries(entries)
         if not all_ids:
             return
+        # 尝试预计算 embeddings 并通过 ChromaDB 原生 upsert 写入，失败则回退
         if self._embedding_fn is not None:
             try:
                 embeddings = self._embedding_fn(all_docs)
@@ -172,8 +284,14 @@ class VectorRetriever:
         self._ensure_initialized()
         if self._store is None:
             return
+        if self._is_new_store:
+            self._add_single_new(content, memory_id, metadata)
+            return
         try:
             meta = {k: str(v) for k, v in metadata.items() if v is not None}
+            # ChromaDB 要求 metadata 非空，添加占位字段
+            if not meta:
+                meta["_default"] = "1"
             if len(content) > self._CHUNK_SIZE:
                 chunks = self._split_chunks(content, self._CHUNK_SIZE, self._CHUNK_OVERLAP)
                 ids = [
@@ -196,10 +314,45 @@ class VectorRetriever:
         except Exception as e:
             logger.warning("Vector add failed for %s: %s", memory_id, e)
 
+    def _add_single_new(
+        self, content: str, memory_id: str, metadata: dict[str, Any]
+    ) -> None:
+        """新 VectorStore 接口单条写入路径。"""
+        if self._embedding_provider is None or self._store is None:
+            return
+        try:
+            meta = {k: str(v) for k, v in metadata.items() if v is not None}
+            if not meta:
+                meta["_default"] = "1"
+            if len(content) > self._CHUNK_SIZE:
+                chunks = self._split_chunks(content, self._CHUNK_SIZE, self._CHUNK_OVERLAP)
+                ids = [
+                    f"{memory_id}_chunk{hashlib.md5(chunk.encode()).hexdigest()[:8]}"
+                    for chunk in chunks
+                ]
+                metas = [
+                    dict(meta, _parent_id=memory_id, _chunk_idx=str(i), content=chunk)
+                    for i, chunk in enumerate(chunks)
+                ]
+                embeddings = self._embedding_provider.embed(chunks)
+                self._store.add(ids=ids, embeddings=embeddings, metadatas=metas)
+                self._record_chunk_ids(ids, metas)
+            else:
+                meta["content"] = content
+                embeddings = self._embedding_provider.embed([content])
+                self._store.add(ids=[memory_id], embeddings=embeddings, metadatas=[meta])
+        except Exception as e:
+            logger.warning("Vector add (new store) failed for %s: %s", memory_id, e)
+
     def search(self, query: str, top_k: int = 10) -> list[dict[str, Any]]:
         self._ensure_initialized()
         if self._store is None:
             return []
+        if self._is_new_store:
+            return self._search_new(query, top_k)
+        return self._search_legacy(query, top_k)
+
+    def _search_legacy(self, query: str, top_k: int) -> list[dict[str, Any]]:
         try:
             count = self._store.count()
             if count == 0:
@@ -219,10 +372,6 @@ class VectorRetriever:
                     entry["content"] = doc
                     sim = 1.0 - dist
                     # ★ R29修复Minor-3：按类型动态调整相似度阈值
-                    # secret/skill/procedural 内容与自然语言查询语义距离大，
-                    # 使用统一阈值会导致这些类型零命中
-                    # ★ BUG FIX: ChromaDB cosine 距离范围为 [0,2]，sim 通常在 [0, 0.5]
-                    # 原阈值 0.25 太高，降到 0.05
                     mem_type = entry.get("type", "fact")
                     type_thresholds = {"secret": 0.03, "skill": 0.05, "procedural": 0.05}
                     threshold = type_thresholds.get(mem_type, 0.05)
@@ -239,6 +388,36 @@ class VectorRetriever:
             logger.warning("Vector search failed: %s", e)
             return [{"degraded": True, "content": "", "score": 0.0, "memory_id": ""}]
 
+    def _search_new(self, query: str, top_k: int) -> list[dict[str, Any]]:
+        if self._embedding_provider is None:
+            return []
+        try:
+            count = self._store.count()
+            if count == 0:
+                return []
+            query_embeddings = self._embedding_provider.embed([query])
+            results = self._store.search(
+                query_embedding=query_embeddings[0],
+                top_k=min(top_k, count),
+            )
+            output = []
+            for entry in results:
+                sim = float(entry.get("score", 0.0))
+                mem_type = entry.get("type", "fact")
+                type_thresholds = {"secret": 0.03, "skill": 0.05, "procedural": 0.05}
+                threshold = type_thresholds.get(mem_type, 0.05)
+                if sim < threshold:
+                    continue
+                entry["score"] = sim
+                if "memory_id" not in entry:
+                    entry["memory_id"] = entry.get("id", "")
+                output.append(entry)
+            output = self._merge_chunk_results(output)
+            return output
+        except Exception as e:
+            logger.warning("Vector search (new store) failed: %s", e)
+            return [{"degraded": True, "content": "", "score": 0.0, "memory_id": ""}]
+
     def count(self) -> int:
         self._ensure_initialized()
         if self._store is None:
@@ -246,6 +425,7 @@ class VectorRetriever:
         try:
             return self._store.count()
         except Exception:
+            logger.warning("VectorRetriever: count() failed", exc_info=True)
             return 0
 
     def warmup(self) -> None:
@@ -255,15 +435,21 @@ class VectorRetriever:
         success = True
         try:
             self._ensure_initialized()
-            if self._embedding_fn is not None:
+            if self._is_new_store:
+                if self._embedding_provider is not None:
+                    self._embedding_provider.embed(["warmup"])
+                    elapsed = time.time() - t0
+                    logger.info("Embedding provider warmed up in %.1fs", elapsed)
+            elif self._embedding_fn is not None:
                 self._embedding_fn(["warmup"])
                 elapsed = time.time() - t0
                 logger.info("SentenceTransformer model loaded in %.1fs", elapsed)
                 _emit(f"[OmniMem] 嵌入模型就绪 ({elapsed:.1f}s), 内存缓存: {self._embedding_fn.cache_size} 条")
             if self._store is not None:
                 doc_count = self._store.count()
-                logger.info("ChromaDB initialized in %.1fs, docs=%d", time.time() - t0, doc_count)
-                _emit(f"[OmniMem] ChromaDB 就绪: {doc_count} 条文档")
+                logger.info("Vector store initialized in %.1fs, docs=%d", time.time() - t0, doc_count)
+                _emit(f"[OmniMem] {self._backend} 就绪: {doc_count} 条文档")
+                logger.info("VectorRetriever [%s] initialized in %.1fs, docs=%d", self._backend, time.time() - t0, doc_count)
         except Exception as e:
             success = False
             logger.warning("VectorRetriever warmup failed (non-fatal): %s", e)
@@ -274,6 +460,15 @@ class VectorRetriever:
 
     def embed_text(self, text: str) -> list[float]:
         self._ensure_initialized()
+        if self._is_new_store:
+            if self._embedding_provider is None:
+                return []
+            try:
+                vecs = self._embedding_provider.embed([text])
+                return vecs[0] if vecs else []
+            except Exception as e:
+                logger.warning("VectorRetriever embed_text failed: %s", e)
+                return []
         if self._embedding_fn is None:
             return []
         try:
@@ -283,7 +478,146 @@ class VectorRetriever:
             logger.warning("VectorRetriever embed_text failed: %s", e)
             return []
 
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        """批量嵌入文本（用于重建索引等批处理场景）。"""
+        self._ensure_initialized()
+        if not texts:
+            return []
+        if self._is_new_store:
+            if self._embedding_provider is None:
+                return []
+            try:
+                return self._embedding_provider.embed(texts)
+            except Exception as e:
+                logger.warning("VectorRetriever embed_texts failed: %s", e)
+                return []
+        if self._embedding_fn is None:
+            return []
+        try:
+            return self._embedding_fn(texts)
+        except Exception as e:
+            logger.warning("VectorRetriever embed_texts failed: %s", e)
+            return []
+
+    def add_batch_with_embeddings(
+        self,
+        ids: list[str],
+        documents: list[str],
+        metadatas: list[dict[str, str]],
+        embeddings: list[list[float]],
+    ) -> None:
+        """使用预计算 embeddings 批量写入向量索引。
+
+        用于重建索引等需要并行计算 embeddings 后统一写入的场景。
+        """
+        self._ensure_initialized()
+        if self._store is None or not ids:
+            return
+        if (
+            len(ids) != len(documents)
+            or len(ids) != len(metadatas)
+            or len(ids) != len(embeddings)
+        ):
+            logger.warning("add_batch_with_embeddings: 列表长度不一致")
+            return
+        try:
+            if self._is_new_store:
+                self._store.add(ids=ids, embeddings=embeddings, metadatas=metadatas)
+                self._record_chunk_ids(ids, metadatas)
+            elif isinstance(self._store, ChromaDBStore) and self._store._collection is not None:
+                self._store._collection.upsert(
+                    ids=ids,
+                    embeddings=embeddings,
+                    documents=documents,
+                    metadatas=metadatas,
+                )
+                self._store._persist_client()
+            else:
+                self._store.add(ids=ids, documents=documents, metadatas=metadatas)
+        except Exception as e:
+            logger.warning("Vector add_batch_with_embeddings failed: %s", e)
+
+    def rebuild_vectors_parallel(
+        self,
+        entries: list[dict[str, Any]],
+        batch_size: int = 32,
+        max_workers: int = 4,
+    ) -> int:
+        """分批并行重建向量索引。
+
+        使用 ThreadPoolExecutor 并行计算各 batch 的 embedding，
+        最后统一批量写入，降低重建索引的总耗时。
+
+        Args:
+            entries: 待重建的记忆条目列表
+            batch_size: 每批条目数，默认 32
+            max_workers: 并行线程数，默认 4
+
+        Returns:
+            实际写入的文档（含 chunk）数量
+        """
+        self._ensure_initialized()
+        if self._store is None or not entries:
+            return 0
+
+        # 统一构建批量写入所需的 ids / documents / metadatas（含长文本拆分）
+        all_ids, all_docs, all_metas = self._build_batch_entries(entries, include_content=True)
+        if not all_ids:
+            return 0
+
+        # 按 batch_size 切分
+        batches: list[tuple[list[str], list[str], list[dict[str, str]]]] = []
+        for i in range(0, len(all_ids), batch_size):
+            batches.append(
+                (all_ids[i : i + batch_size], all_docs[i : i + batch_size], all_metas[i : i + batch_size])
+            )
+
+        # 并行计算每个 batch 的 embeddings
+        def _embed_batch(batch: tuple[list[str], list[str], list[dict[str, str]]]) -> list[list[float]]:
+            _, docs, _ = batch
+            return self.embed_texts(docs)
+
+        all_embeddings: list[list[float]] = []
+        try:
+            if max_workers <= 1 or len(batches) <= 1:
+                for batch in batches:
+                    all_embeddings.extend(_embed_batch(batch))
+            else:
+                with ThreadPoolExecutor(max_workers=min(max_workers, len(batches))) as executor:
+                    for emb_batch in executor.map(_embed_batch, batches):
+                        all_embeddings.extend(emb_batch)
+        except Exception as e:
+            logger.warning("Vector parallel rebuild embedding failed: %s", e)
+            return 0
+
+        if len(all_embeddings) != len(all_ids):
+            logger.warning(
+                "Vector parallel rebuild size mismatch: ids=%d, embeddings=%d",
+                len(all_ids),
+                len(all_embeddings),
+            )
+            return 0
+
+        # 批量写入
+        try:
+            self.add_batch_with_embeddings(all_ids, all_docs, all_metas, all_embeddings)
+            self.flush()
+        except Exception as e:
+            logger.warning("Vector parallel rebuild write failed: %s", e)
+            return 0
+
+        return len(all_ids)
+
     def flush(self) -> None:
+        if self._is_new_store:
+            try:
+                if hasattr(self._store, "close"):
+                    self._store.close()
+                elif hasattr(self._store, "_persist_client"):
+                    self._store._persist_client()
+            except Exception as e:
+                logger.warning("Vector store persist failed: %s", e)
+            return
         try:
             if isinstance(self._store, ChromaDBStore):
                 self._store._persist_client()
@@ -296,15 +630,19 @@ class VectorRetriever:
                 logger.warning("Embedding cache persist failed: %s", e)
 
     def delete(self, memory_id: str) -> None:
-        """从向量索引中删除指定条目（包括分块）。
-
-        ChromaDB 的分块 ID 格式为 {memory_id}_chunk{hash}，
-        需要先查询所有匹配的 ID 再删除。
-        """
+        """从向量索引中删除指定条目（包括分块）。"""
         self._ensure_initialized()
         if self._store is None:
             return
         try:
+            if self._is_new_store:
+                ids_to_delete = [memory_id]
+                chunk_ids = self._chunk_ids.get(memory_id, [])
+                if chunk_ids:
+                    ids_to_delete.extend(chunk_ids)
+                    self._chunk_ids.pop(memory_id, None)
+                self._store.delete(ids_to_delete)
+                return
             if isinstance(self._store, ChromaDBStore) and self._store._collection is not None:
                 # 查询所有以 memory_id 开头的 ID（含分块）
                 all_ids = self._store._collection.get(ids=None, include=[])["ids"]

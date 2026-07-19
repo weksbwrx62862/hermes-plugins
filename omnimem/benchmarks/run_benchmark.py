@@ -1,9 +1,8 @@
-import sys
 import json
+import sys
 from pathlib import Path
 
 from omnimem.benchmarks.l3_l4_benchmark import L3L4Benchmark
-
 
 if __name__ == "__main__":
     storage_dir = sys.argv[1] if len(sys.argv) > 1 else ".omnimem_bench"

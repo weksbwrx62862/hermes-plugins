@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 
@@ -101,8 +100,8 @@ class TestCompressionPipelineMermaid:
 
     def test_tool_log_goes_mermaid(self, omni_tmp_path):
         """工具日志应走 Mermaid 路径。"""
-        from omnimem.compression.pipeline import CompressionPipeline
         from omnimem.compression.mermaid_canvas import MermaidCanvas
+        from omnimem.compression.pipeline import CompressionPipeline
 
         canvas = MermaidCanvas(omni_tmp_path)
         pipeline = CompressionPipeline(
@@ -117,8 +116,8 @@ class TestCompressionPipelineMermaid:
 
     def test_normal_content_skips_mermaid(self, omni_tmp_path):
         """普通内容不应走 Mermaid 路径。"""
-        from omnimem.compression.pipeline import CompressionPipeline
         from omnimem.compression.mermaid_canvas import MermaidCanvas
+        from omnimem.compression.pipeline import CompressionPipeline
 
         canvas = MermaidCanvas(omni_tmp_path)
         pipeline = CompressionPipeline(

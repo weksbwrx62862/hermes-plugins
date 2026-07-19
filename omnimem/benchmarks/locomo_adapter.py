@@ -66,7 +66,7 @@ class LOCOMODataset:
             raise FileNotFoundError(f"LOCOMO 数据集文件不存在: {path}")
 
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 data = json.load(f)
         except json.JSONDecodeError as e:
             raise ValueError(f"LOCOMO 数据集 JSON 解析失败: {e}") from e
@@ -109,7 +109,7 @@ class LOCOMODataset:
             raise ImportError(
                 "加载 HuggingFace 数据集需要 datasets 库，"
                 "请安装: pip install datasets"
-            )
+            ) from None
 
         try:
             ds = load_dataset("kernel-loopy/LOCOMO", split=split)

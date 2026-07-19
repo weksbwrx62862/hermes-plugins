@@ -6,7 +6,12 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from omnimem.retrieval.vector_store import ChromaDBStore, QdrantStore, VectorStore, _CachedEmbeddingFunction
+from omnimem.retrieval.vector_store import (
+    ChromaDBStore,
+    QdrantStore,
+    VectorStore,
+    _CachedEmbeddingFunction,
+)
 
 logger = logging.getLogger(__name__)
 

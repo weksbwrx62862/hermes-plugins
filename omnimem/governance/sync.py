@@ -19,7 +19,6 @@ import json
 import logging
 import os
 import threading
-import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -31,17 +30,9 @@ from omnimem.governance.vector_clock import (
     VectorClock,
     merge_records,
 )
+from omnimem.utils.lock import FileLockProvider
 
 logger = logging.getLogger(__name__)
-
-# ★ 平台兼容：fcntl 仅在 Unix 可用，Windows 上降级为进程内锁
-try:
-    import fcntl
-
-    _HAS_FCNTL = True
-except ImportError:
-    fcntl = None  # type: ignore[assignment]
-    _HAS_FCNTL = False
 
 
 # ─── 数据模型 ────────────────────────────────────────────────
@@ -68,85 +59,15 @@ class SyncConfig:
 # ─── 文件锁管理器 ─────────────────────────────────────────────
 
 
-class FileLockManager:
+class FileLockManager(FileLockProvider):
     """基于 fcntl 的跨进程文件锁（Unix）；Windows 上降级为进程内线程锁。
 
-    适用于单主机多进程场景，防止多个进程同时写入 SQLite。
+    保留 FileLockManager 名称以兼容现有代码，底层委托 FileLockProvider。
     """
 
     def __init__(self, lock_dir: Path):
-        self._lock_dir = lock_dir
-        self._lock_dir.mkdir(parents=True, exist_ok=True)
-        self._lock_file = self._lock_dir / "omnimem.lock"
-        self._lock_file.touch(exist_ok=True)
-        self._fd: int | None = None
-        self._lock_count = 0
-        self._wait_time = 0.0
-        # Windows 降级：进程内线程锁（多进程并发写入仍依赖 SQLite WAL）
-        self._fallback_lock = threading.Lock()
-        self._has_fcntl = _HAS_FCNTL
-        if not self._has_fcntl:
-            logger.warning(
-                "fcntl unavailable on this platform — FileLockManager falls back to threading.Lock (intra-process only)"
-            )
-
-    def acquire(self, timeout: float = 5.0, exclusive: bool = True) -> bool:
-        """获取文件锁。
-
-        Args:
-            timeout: 超时时间(秒)
-            exclusive: True=排他锁, False=共享锁
-
-        Returns:
-            是否成功获取锁
-        """
-        if not self._has_fcntl:
-            self._fallback_lock.acquire()
-            self._lock_count += 1
-            return True
-
-        if self._fd is None:
-            self._fd = os.open(str(self._lock_file), os.O_RDWR)
-
-        lock_type = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH  # type: ignore[attr-defined]
-        start_time = time.monotonic()
-
-        while True:
-            try:
-                fcntl.flock(self._fd, lock_type | fcntl.LOCK_NB)  # type: ignore[attr-defined]
-                self._lock_count += 1
-                return True
-            except OSError:
-                elapsed = time.monotonic() - start_time
-                if elapsed >= timeout:
-                    self._wait_time += elapsed
-                    return False
-                time.sleep(0.05)
-
-    def release(self) -> None:
-        """释放文件锁。"""
-        if not self._has_fcntl:
-            self._fallback_lock.release()
-            return
-        if self._fd is not None:
-            try:
-                fcntl.flock(self._fd, fcntl.LOCK_UN)  # type: ignore[attr-defined]
-            except OSError as e:
-                logger.warning("FileLock release failed: %s", e)
-
-    def stats(self) -> dict[str, Any]:
-        """获取锁统计。"""
-        return {
-            "acquisitions": self._lock_count,
-            "total_wait_time_ms": round(self._wait_time * 1000, 2),
-        }
-
-    def close(self) -> None:
-        """关闭锁。"""
-        self.release()
-        if self._has_fcntl and self._fd is not None:
-            os.close(self._fd)
-            self._fd = None
+        lock_path = Path(lock_dir) / "omnimem.lock"
+        super().__init__(lock_path)
 
 
 # ─── 变更日志 ────────────────────────────────────────────────

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -100,6 +101,7 @@ class VectorClock:
         try:
             return cls.from_dict(json.loads(s))
         except Exception:
+            logger.debug("VectorClock: from_json parse failed, returning empty clock: %s", s[:100])
             return cls()
 
     def to_json(self) -> str:
@@ -142,7 +144,62 @@ class VectorClock:
                     return cls({k: int(v) for k, v in data.items()})
         except Exception as e:
             logger.warning("VectorClock load failed: %s", e)
-        return cls()
+            return cls()
+
+    def save_to_sqlite(self, db_path: Path) -> bool:
+        """持久化向量时钟到 SQLite 数据库。
+
+        Args:
+            db_path: SQLite 数据库文件路径
+
+        Returns:
+            是否成功
+        """
+        try:
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+            conn = sqlite3.connect(str(db_path))
+            try:
+                conn.execute(
+                    "CREATE TABLE IF NOT EXISTS vector_clock "
+                    "(node_id TEXT PRIMARY KEY, counter INTEGER NOT NULL)"
+                )
+                conn.execute("DELETE FROM vector_clock")
+                conn.executemany(
+                    "INSERT INTO vector_clock (node_id, counter) VALUES (?, ?)",
+                    self._clock.items(),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            return True
+        except Exception as e:
+            logger.warning("VectorClock save_to_sqlite failed: %s", e)
+            return False
+
+    @classmethod
+    def load_from_sqlite(cls, db_path: Path) -> VectorClock:
+        """从 SQLite 数据库加载向量时钟。
+
+        Args:
+            db_path: SQLite 数据库文件路径
+
+        Returns:
+            VectorClock 实例（加载失败时返回空时钟）
+        """
+        try:
+            if not db_path.exists():
+                return cls()
+            conn = sqlite3.connect(str(db_path))
+            try:
+                rows = conn.execute(
+                    "SELECT node_id, counter FROM vector_clock"
+                ).fetchall()
+            finally:
+                conn.close()
+            return cls({row[0]: int(row[1]) for row in rows})
+        except Exception as e:
+            logger.warning("VectorClock load_from_sqlite failed: %s", e)
+            return cls()
 
     @classmethod
     def recover_from_entries(

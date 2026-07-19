@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from omnimem.benchmarks.cost_tracker import CostTracker
 from omnimem.benchmarks.locomo_adapter import (
     LOCOMODataset,
     LOCOMOEvaluator,
@@ -26,7 +27,7 @@ from omnimem.benchmarks.longmemeval_adapter import (
 
 logger = logging.getLogger(__name__)
 
-_SUPPORTED_BENCHMARKS = ("locomo", "longmemeval")
+_SUPPORTED_BENCHMARKS = ("locomo", "longmemeval", "five_dimension")
 
 _QUICK_SAMPLE_SIZE = 10
 
@@ -65,6 +66,8 @@ def run_benchmark(
     if benchmark_name == "locomo":
         dataset = _load_locomo_dataset(dataset_path)
         evaluator = LOCOMOEvaluator(provider)
+    elif benchmark_name == "five_dimension":
+        return run_five_dimension_benchmark(provider, output_path, dataset_path)
     else:
         dataset = _load_longmemeval_dataset(dataset_path)
         evaluator = LongMemEvalEvaluator(provider)
@@ -321,7 +324,7 @@ def main() -> None:
     )
 
     if len(sys.argv) < 2:
-        print(f"用法: python -m omnimem.benchmarks.run_standard_benchmark <benchmark_name> [dataset_path] [output_path]")
+        print("用法: python -m omnimem.benchmarks.run_standard_benchmark <benchmark_name> [dataset_path] [output_path]")
         print(f"支持的基准测试: {', '.join(_SUPPORTED_BENCHMARKS)}, quick")
         sys.exit(1)
 
@@ -333,6 +336,16 @@ def main() -> None:
         provider.initialize(session_id="bench-quick")
         result = run_quick_benchmark(provider)
         print(json.dumps(result, ensure_ascii=False, indent=2))
+        return
+
+    if benchmark_name == "five_dimension":
+        output_path = sys.argv[2] if len(sys.argv) > 2 else None
+        dataset_path = sys.argv[3] if len(sys.argv) > 3 else None
+        from omnimem.provider import OmniMemProvider
+        provider = OmniMemProvider()
+        provider.initialize(session_id="bench-five-dimension")
+        report = run_five_dimension_benchmark(provider, output_path, dataset_path)
+        print(json.dumps(report.get("dimensions", {}), ensure_ascii=False, indent=2))
         return
 
     dataset_path = sys.argv[2] if len(sys.argv) > 2 else None
@@ -354,3 +367,161 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+# ★ P2-2 五维评测 — 对照论文《Are We Ready For An Agent-Native Memory System?》的 5 个评测维度
+
+_FIVE_DIMENSION_MAP: dict[str, list[str]] = {
+    "task_performance": ["locomo_overall", "longmemeval_overall"],
+    "evidence_retrieval": ["locomo_single_hop", "longmemeval_information_extraction"],
+    "dynamic_update": ["longmemeval_knowledge_update", "longmemeval_temporal_reasoning"],
+    "long_term_stability": ["locomo_temporal", "locomo_multi_hop"],
+    "operational_cost": ["cost_tracker"],
+}
+
+
+def run_five_dimension_benchmark(
+    provider: Any,
+    output_path: str | Path | None = None,
+    dataset_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """运行五维基准测试，输出统一报告。
+
+    对照论文建议的五维评估框架：
+      1. task_performance — 端到端任务效果 (LOCOMO + LongMemEval)
+      2. evidence_retrieval — 证据检索保真度
+      3. dynamic_update — 动态更新与时序推理
+      4. long_term_stability — 长程稳定性
+      5. operational_cost — 操作成本
+
+    Args:
+        provider: OmniMemProvider 实例
+        output_path: 报告输出路径（JSON）
+        dataset_path: 数据集路径（可选）
+
+    Returns:
+        五维评测报告
+    """
+    logger.info("=== 开始五维基准测试 ===")
+    start_time = time.time()
+
+    # 1. 运行 LOCOMO + LongMemEval
+    locomo_ds = _load_locomo_dataset(dataset_path)
+    longmemeval_ds = _load_longmemeval_dataset(dataset_path)
+
+    locomo_evaluator = LOCOMOEvaluator(provider)
+    longmemeval_evaluator = LongMemEvalEvaluator(provider)
+
+    locomo_report = locomo_evaluator.run(locomo_ds)
+    longmemeval_report = longmemeval_evaluator.run(longmemeval_ds)
+
+    # 2. 运行成本追踪（在 benchmark 执行期间记录的操作成本）
+    cost_tracker = CostTracker()
+    cost_tracker.record(
+        "benchmark_locomo",
+        latency_ms=locomo_report.get("elapsed_seconds", 0) * 1000,
+        result_count=locomo_report.get("total_questions", 0),
+    )
+    cost_tracker.record(
+        "benchmark_longmemeval",
+        latency_ms=longmemeval_report.get("elapsed_seconds", 0) * 1000,
+        result_count=longmemeval_report.get("total_questions", 0),
+    )
+
+    # 3. 聚合五维得分
+    locomo_metrics = locomo_report.get("metrics", {})
+    longmemeval_metrics = longmemeval_report.get("metrics", {})
+
+    dimensions = {
+        "task_performance": {
+            "name": "端到端任务效果",
+            "score": round(
+                (locomo_metrics.get("overall_accuracy", 0)
+                 + longmemeval_metrics.get("overall_accuracy", 0)) / 2 * 100,
+                2,
+            ),
+            "locomo_accuracy": round(locomo_metrics.get("overall_accuracy", 0) * 100, 2),
+            "longmemeval_accuracy": round(longmemeval_metrics.get("overall_accuracy", 0) * 100, 2),
+        },
+        "evidence_retrieval": {
+            "name": "证据检索保真度",
+            "score": round(
+                locomo_metrics.get("single_hop_accuracy", locomo_metrics.get("overall_accuracy", 0)) * 100,
+                2,
+            ),
+            "locomo_single_hop": round(
+                locomo_metrics.get("single_hop_accuracy", 0) * 100, 2,
+            ),
+            "longmemeval_information_extraction": round(
+                longmemeval_metrics.get("information_extraction_accuracy", 0) * 100, 2,
+            ),
+        },
+        "dynamic_update": {
+            "name": "动态更新与时序推理",
+            "score": round(
+                (longmemeval_metrics.get("knowledge_update_accuracy", 0)
+                 + longmemeval_metrics.get("temporal_reasoning_accuracy", 0)) / 2 * 100,
+                2,
+            ),
+            "knowledge_update": round(
+                longmemeval_metrics.get("knowledge_update_accuracy", 0) * 100, 2,
+            ),
+            "temporal_reasoning": round(
+                longmemeval_metrics.get("temporal_reasoning_accuracy", 0) * 100, 2,
+            ),
+        },
+        "long_term_stability": {
+            "name": "长程稳定性（跨会话推理）",
+            "score": round(
+                (locomo_metrics.get("multi_hop_accuracy", 0)
+                 + locomo_metrics.get("temporal_accuracy", 0)) / 2 * 100,
+                2,
+            ),
+            "locomo_multi_hop": round(
+                locomo_metrics.get("multi_hop_accuracy", 0) * 100, 2,
+            ),
+            "locomo_temporal": round(
+                locomo_metrics.get("temporal_accuracy", 0) * 100, 2,
+            ),
+        },
+        "operational_cost": {
+            "name": "操作成本",
+            "cost_summary": cost_tracker.report(),
+            "total_operations": cost_tracker.report()["total_operations"],
+        },
+    }
+
+    elapsed = round(time.time() - start_time, 2)
+
+    report = {
+        "benchmark": "five_dimension",
+        "elapsed_seconds": elapsed,
+        "timestamp": time.time(),
+        "dimensions": dimensions,
+        "average_score": round(
+            sum(
+                d.get("score", 0) for d in dimensions.values()
+                if "score" in d
+            ) / 4,  # cost 维度无 score
+            2,
+        ),
+        "locomo_detail": {
+            k: round(v * 100, 2) if isinstance(v, float) else v
+            for k, v in locomo_metrics.items()
+        },
+        "longmemeval_detail": {
+            k: round(v * 100, 2) if isinstance(v, float) else v
+            for k, v in longmemeval_metrics.items()
+        },
+    }
+
+    logger.info(
+        "五维评测完成: 平均得分=%.2f%%, 耗时=%.1fs",
+        report["average_score"],
+        elapsed,
+    )
+
+    if output_path is not None:
+        _save_report(report, output_path)
+
+    return report

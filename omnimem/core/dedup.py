@@ -21,7 +21,9 @@ class SemanticDedupService:
         if len(content) <= 20:
             exact = candidates or self._store.search_by_content(content, limit=5)
             for m in exact:
-                if m.get("content", "").strip() == content.strip():
+                # R46修复：字段名 content_preview（meta_store 返回的字段名）
+                stored = m.get("content_preview", "") or m.get("content", "")
+                if stored.strip() == content.strip():
                     return {
                         "action": "skip",
                         "existing_id": m.get("memory_id", ""),
@@ -53,10 +55,11 @@ class SemanticDedupService:
                     "reason": f"Near-duplicate (sim={sim:.2f})",
                 }
             if sim > 0.6:
+                # ★ ADD-only 策略：新记忆独立创建，旧记忆标记为 superseded（不删除不覆盖）
                 return {
-                    "action": "update",
-                    "existing_id": m.get("memory_id", ""),
-                    "reason": f"Similar (sim={sim:.2f}), archiving old",
+                    "action": "create",
+                    "superseded_id": m.get("memory_id", ""),
+                    "reason": f"Similar (sim={sim:.2f}), ADD-only: new fact created, old superseded",
                 }
 
         return {"action": "create"}
@@ -64,8 +67,8 @@ class SemanticDedupService:
     def search_candidates(self, content: str) -> list[dict[str, Any]]:
         similar = []
         try:
-            if self._retriever and hasattr(self._retriever, "_vector") and self._retriever._vector:
-                vector_results = self._retriever._vector.search(content, top_k=10)
+            if self._retriever:
+                vector_results = self._retriever.vector_search(content, top_k=10)
                 if vector_results:
                     similar = vector_results
         except Exception as e:

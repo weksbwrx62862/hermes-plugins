@@ -1,9 +1,9 @@
 import pytest
+
 pytest.importorskip("chromadb", reason="chromadb not installed")
 
 import shutil
 import uuid
-from pathlib import Path
 
 from omnimem.sdk import OmniMemSDK
 
@@ -75,6 +75,7 @@ def test_sdk_config_override():
     tmpdir = _make_tmpdir()
     try:
         with OmniMemSDK(storage_dir=tmpdir, config={"budget_tokens": 8000}) as sdk:
-            assert sdk._provider._config.get("budget_tokens") == 8000
+            # 通过 SDK 内部配置对象访问
+            assert sdk._config.get("budget_tokens") == 8000
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)

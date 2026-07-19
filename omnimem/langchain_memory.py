@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from typing import Any
-
 
 class OmniMemLangChainMemory:
+    MAX_BUFFER_SIZE = 100000  # 100KB 限制
+
     def __init__(self, storage_dir: str | None = None, config: dict | None = None):
         from omnimem.sdk import OmniMemSDK
 
@@ -28,7 +28,11 @@ class OmniMemLangChainMemory:
         ai = outputs.get("output", "")
         if human:
             self._sdk.memorize(content=human, memory_type="fact")
-        self.buffer += f"Human: {human}\nAI: {ai}\n"
+        new_entry = f"Human: {human}\nAI: {ai}\n"
+        self.buffer += new_entry
+        # 限制 buffer 大小，保留最新的内容
+        if len(self.buffer) > self.MAX_BUFFER_SIZE:
+            self.buffer = self.buffer[-self.MAX_BUFFER_SIZE:]
 
     def clear(self) -> None:
         self.buffer = ""

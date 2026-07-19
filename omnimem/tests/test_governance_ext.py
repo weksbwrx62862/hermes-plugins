@@ -6,16 +6,14 @@
 
 from __future__ import annotations
 
-import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from omnimem.governance.audit_log import AuditLogger
 from omnimem.governance.kms import KMSManager
 from omnimem.governance.rbac import RBACManager
-
 
 # ──────────────────────────────────────────────
 # AuditLogger
@@ -58,7 +56,7 @@ class TestAuditLogger(unittest.TestCase):
         import time
         before = time.time()
         self.audit.log("write", memory_id="m1")
-        after = time.time()
+        time.time()
 
         # from_time filter
         results = self.audit.query(from_time=before, limit=10)

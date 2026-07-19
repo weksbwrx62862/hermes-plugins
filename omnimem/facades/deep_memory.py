@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from omnimem.deep.consolidation import ConsolidationEngine
-from omnimem.deep.knowledge_graph import KnowledgeGraph
+from omnimem.deep.kg import KnowledgeGraph
 from omnimem.deep.reflect import ReflectEngine
 
 

@@ -1,0 +1,13 @@
+name: prompt-optimizer
+version: 1.0.0
+description: "提示词优化工作台 — 基于 prompt-optimizer 理论：一键优化、质量分析、A/B 对比、Prompt Garden 资产管理。把提示词从'随便写写'变成'可测试、可复用、可迭代'。"
+kind: backend
+author: xxh
+hermes_compat: ">=2.0.0"
+provides_tools:
+  - prompt_optimize
+  - prompt_analyze
+  - prompt_compare
+  - prompt_garden
+provides_hooks:
+  - pre_llm_call

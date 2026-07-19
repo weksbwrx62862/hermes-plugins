@@ -13,17 +13,15 @@ import time
 from pathlib import Path
 from typing import Any
 
-from omnimem.core.action_memory import ActionRecord, ActionMemoryService
+from omnimem.core.action_memory import ActionMemoryService, ActionRecord
 from omnimem.core.dedup import SemanticDedupService
-from omnimem.deep.knowledge_graph import (
+from omnimem.deep.kg import (
     KnowledgeGraph,
-    extract_entities,
-    extract_triples,
     _classify_entity_poleo,
+    extract_entities,
 )
 from omnimem.governance.feedback import FeedbackCollector
 from omnimem.utils.security import SecurityValidator
-
 
 # ── 测试数据 ──
 
@@ -176,7 +174,7 @@ class FullStackBenchmark:
         """信任评分计算。"""
         fb = FeedbackCollector(self._dir / "bench_trust")
 
-        start = time.perf_counter()
+        time.perf_counter()
         for i in range(50):
             mid = f"mem-{i % 10:03d}"
             fb.record_click(f"query-{i % 5}", mid)
@@ -185,7 +183,7 @@ class FullStackBenchmark:
         for i in range(10):
             mid = f"mem-{i:03d}"
             t0 = time.perf_counter()
-            trust = fb.get_memory_trust(mid)
+            fb.get_memory_trust(mid)
             latencies.append((time.perf_counter() - t0) * 1000)
 
         return {

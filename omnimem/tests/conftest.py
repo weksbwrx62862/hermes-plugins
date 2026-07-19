@@ -28,7 +28,7 @@ def omni_tmp_path() -> Generator[Path, None, None]:
 @pytest.fixture(autouse=False)
 def skip_if_no_chromadb():
     try:
-        import chromadb
+        import chromadb  # noqa: F401
     except ImportError:
         pytest.skip("chromadb not installed")
 
@@ -36,6 +36,6 @@ def skip_if_no_chromadb():
 @pytest.fixture(autouse=False)
 def skip_if_no_sentence_transformers():
     try:
-        import sentence_transformers
+        import sentence_transformers  # noqa: F401
     except ImportError:
         pytest.skip("sentence-transformers not installed")

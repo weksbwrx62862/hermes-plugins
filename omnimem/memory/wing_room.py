@@ -14,6 +14,7 @@ import hashlib
 import logging
 import re
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -233,7 +234,7 @@ class WingRoomManager:
 
     def tree(self, wing: str = "", hall: str = "") -> dict[str, Any]:
         """展示目录树 — 内化 OpenViking tree()。
-        
+
         Returns:
             嵌套字典表示的目录树：
             {
@@ -258,12 +259,12 @@ class WingRoomManager:
 
     def grep_rooms(self, pattern: str) -> list[dict[str, str]]:
         """搜索 Room 名称 — 内化 OpenViking grep()。
-        
+
         在所有 Wing/Hall 下搜索匹配 pattern 的 Room 名称。
-        
+
         Args:
             pattern: 搜索模式（子串匹配，不区分大小写）
-        
+
         Returns:
             [{"wing": str, "hall": str, "room": str}, ...]
         """
@@ -304,17 +305,21 @@ class WingRoomManager:
         """
         # 策略 1: 尝试使用 KG 的 extract_entities
         try:
-            from omnimem.deep.knowledge_graph import extract_entities
+            from omnimem.deep.kg import extract_entities
 
             entities = extract_entities(content)
             # 过滤停用词和太短的实体
             valid = [e for e in entities if e.lower() not in _STOPWORDS and len(e) >= 2]
             if valid:
-                # 优先纯英文实体（技术术语更精确），再按长度升序
-                def _entity_priority(e: str) -> tuple[int, int]:
+                # 优先纯英文实体（技术术语更精确）；同优先级时按在原文中出现顺序选择
+                def _entity_priority(e: str) -> tuple[int, int, int]:
                     is_pure_en = bool(re.match(r"^[A-Za-z0-9_.-]+$", e))
                     is_mixed = bool(re.search(r"[A-Za-z]", e) and re.search(r"[\u4e00-\u9fff]", e))
-                    return (0 if is_pure_en else (1 if not is_mixed else 2), len(e))
+                    # 位置越靠前优先级越高（数值越小）
+                    pos = content.find(e)
+                    if pos < 0:
+                        pos = len(content)
+                    return (0 if is_pure_en else (1 if not is_mixed else 2), pos, len(e))
 
                 valid.sort(key=_entity_priority)
                 best = valid[0]

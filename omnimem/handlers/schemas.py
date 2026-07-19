@@ -5,12 +5,23 @@
 
 from typing import Any
 
+from omnimem.core.tool_names import (
+    MEMORY_COMPAT,
+    OMNI_COMPACT,
+    OMNI_DETAIL,
+    OMNI_GOVERN,
+    OMNI_MEMORIZE,
+    OMNI_RECALL,
+    OMNI_RECORD_ACTION,
+    OMNI_REFLECT,
+)
+
 
 def get_tool_schemas() -> list[dict[str, Any]]:
     """OmniMem 暴露 7 个工具给 Agent。"""
     return [
         {
-            "name": "omni_memorize",
+            "name": OMNI_MEMORIZE,
             "description": (
                 "Store a memory in OmniMem. Use for important facts, decisions, "
                 "corrections, user preferences, agent actions, reasoning chains, "
@@ -64,7 +75,7 @@ def get_tool_schemas() -> list[dict[str, Any]]:
             },
         },
         {
-            "name": "omni_recall",
+            "name": OMNI_RECALL,
             "description": (
                 "Search OmniMem for relevant memories. Use before answering "
                 "questions about past context, user preferences, or decisions. "
@@ -79,24 +90,39 @@ def get_tool_schemas() -> list[dict[str, Any]]:
                     },
                     "mode": {
                         "type": "string",
-                        "enum": ["rag", "llm"],
+                        "enum": ["rag", "llm", "associative"],
                         "default": "rag",
                         "description": (
-                            "rag: fast vector+BM25 hybrid (milliseconds). "
-                            "llm: deep reasoning with intent prediction (seconds)."
-                        ),
+                                    "rag: fast vector+BM25 hybrid (milliseconds). "
+                                    "Auto-triggers associative spreading via KG and semantic space "
+                                    "when precise results are scarce (<3). "
+                                    "llm: deep reasoning with intent prediction (seconds). "
+                                    "associative: always includes associative spreading."
+                                ),
                     },
                     "max_tokens": {
                         "type": "integer",
                         "default": 1500,
                         "description": "Maximum tokens in results",
                     },
+                    "type_filter": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Optional: filter results by memory type. "
+                            "e.g. ['preference', 'correction', 'fact']. "
+                            "Leave empty to return all types. "
+                            "Valid types: fact, preference, correction, skill, "
+                            "procedural, event, action, reasoning, knowledge, "
+                            "workflow, project, convention, maintenance, user_profile"
+                        ),
+                    },
                 },
                 "required": ["query"],
             },
         },
         {
-            "name": "omni_compact",
+            "name": OMNI_COMPACT,
             "description": (
                 "Manually trigger context compaction with OmniMem's progressive "
                 "compression engine. Useful when you notice context is getting long."
@@ -113,7 +139,7 @@ def get_tool_schemas() -> list[dict[str, Any]]:
             },
         },
         {
-            "name": "omni_reflect",
+            "name": OMNI_REFLECT,
             "description": (
                 "Reflect on accumulated memories to generate deeper insights. "
                 "Consolidates raw facts into observations and mental models. "
@@ -158,7 +184,7 @@ def get_tool_schemas() -> list[dict[str, Any]]:
             },
         },
         {
-            "name": "omni_govern",
+            "name": OMNI_GOVERN,
             "description": (
                 "Manage memory governance: resolve conflicts, set privacy levels, "
                 "trigger forgetting/archive, or view memory provenance."
@@ -209,7 +235,7 @@ def get_tool_schemas() -> list[dict[str, Any]]:
             },
         },
         {
-            "name": "omni_detail",
+            "name": OMNI_DETAIL,
             "description": (
                 "Fetch full details of a specific memory by ID. Use when you need "
                 "more context than the summary provided in prefetch. "
@@ -253,7 +279,7 @@ def get_tool_schemas() -> list[dict[str, Any]]:
             },
         },
         {
-            "name": "memory",
+            "name": MEMORY_COMPAT,
             "description": (
                 "Save durable information to persistent memory that survives across sessions. "
                 "Memory is injected into future turns, so keep it compact and focused on facts "
@@ -294,7 +320,7 @@ def get_tool_schemas() -> list[dict[str, Any]]:
             },
         },
         {
-            "name": "omni_record_action",
+            "name": OMNI_RECORD_ACTION,
             "description": (
                 "Record an agent action: tool call, decision, subagent spawn, "
                 "or error handling. Captures what the agent did, why, the outcome, "

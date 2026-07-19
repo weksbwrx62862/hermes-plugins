@@ -1,0 +1,14 @@
+name: understand_anything
+version: 1.0.0
+description: "Understand-Anything 代码理解仪表盘插件 - 生成交互式知识图谱和可视化仪表盘"
+author: Hermes Agent
+kind: backend
+dependencies:
+  - node>=22
+  - pnpm>=10
+provides_tools:
+  - understand_analyze
+  - understand_dashboard
+  - understand_search
+  - understand_explain
+entry_point: __init__.py

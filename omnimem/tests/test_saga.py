@@ -1,17 +1,14 @@
-import json
 import tempfile
 from pathlib import Path
 
-import pytest
-
-from omnimem.core.saga import SagaCoordinator, SagaStep, SagaResult
+from omnimem.core.saga import SagaCoordinator, SagaStep
 
 
 class TestSagaCoordinator:
     def setup_method(self):
         self.tmpdir = tempfile.mkdtemp()
         self.pending_path = Path(self.tmpdir) / "saga_pending.json"
-        self.saga = SagaCoordinator(pending_path=self.pending_path)
+        self.saga = SagaCoordinator(pending_path=self.pending_path, base_backoff=0.0, max_backoff=0.0)
 
     def test_execute_all_success(self):
         steps = [
@@ -53,7 +50,7 @@ class TestSagaCoordinator:
         assert result.success is False
         assert len(self.saga._pending) >= 1
 
-        step_actions = {"flaky": lambda mid: flaky_action()}
+        step_actions = {"flaky": lambda _mid: flaky_action()}
         self.saga.retry_pending(step_actions)
         if call_count["n"] >= 3:
             assert len(self.saga._pending) == 0
@@ -67,8 +64,9 @@ class TestSagaCoordinator:
         ]
         self.saga.execute("mem-004", steps)
 
-        step_actions = {"doomed": lambda mid: always_fail()}
+        step_actions = {"doomed": lambda _mid: always_fail()}
         for _ in range(11):
+            self.saga.reset_circuit_breaker()  # 新增：重置熔断器以允许重试继续
             self.saga.retry_pending(step_actions)
 
         assert len(self.saga._dead_letters) >= 1
@@ -122,8 +120,9 @@ class TestSagaCoordinator:
         steps = [SagaStep(name="doomed", action=always_fail)]
         self.saga.execute("mem-009", steps)
 
-        step_actions = {"doomed": lambda mid: always_fail()}
+        step_actions = {"doomed": lambda _mid: always_fail()}
         for _ in range(11):
+            self.saga.reset_circuit_breaker()
             self.saga.retry_pending(step_actions)
 
         dead = self.saga.get_dead_letters()
@@ -142,7 +141,7 @@ class TestSagaCoordinator:
         steps = [SagaStep(name="retry_step", action=eventually_ok)]
         self.saga.execute("mem-010", steps)
 
-        step_actions = {"retry_step": lambda mid: eventually_ok()}
+        step_actions = {"retry_step": lambda _mid: eventually_ok()}
         self.saga.auto_retry_pending(step_actions)
         if call_count["n"] >= 2:
             assert len(self.saga._pending) == 0

@@ -2,13 +2,10 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import pytest
-
 from omnimem.deep.reflect import (
     Disposition,
     ReflectEngine,
     ReflectResult,
-    ReflectionContext,
     _apply_disposition,
 )
 

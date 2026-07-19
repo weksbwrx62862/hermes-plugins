@@ -39,7 +39,7 @@ class KVCacheManager:
     def __init__(
         self,
         data_dir: Path | None = None,
-        auto_preload_threshold: int = 10,
+        auto_preload_threshold: int = 3,
         max_cache_size: int = 100,
     ):
         """初始化 KVCacheManager。
@@ -60,6 +60,7 @@ class KVCacheManager:
 
         if data_dir:
             self._init_db(data_dir)
+            self._sync_from_forgetting_db(data_dir)
 
     def _init_db(self, data_dir: Path) -> None:
         """初始化 KV Cache 持久化数据库。"""
@@ -123,6 +124,61 @@ class KVCacheManager:
             logger.info("KV Cache: restored %d entries from disk", len(self._cache))
         except Exception as e:
             logger.warning("KV Cache restore failed: %s", e)
+
+    def _sync_from_forgetting_db(self, data_dir: Path) -> None:
+        """从遗忘数据库同步高频访问的记忆到 KV Cache。
+
+        读取 forgetting.db 中 recall_count >= threshold 的记忆，
+        然后从主索引加载内容并预填充到 KV Cache。
+        """
+        forgetting_db = data_dir.parent / "forgetting.db"
+        index_db = data_dir.parent / "index" / "index.db"
+
+        if not forgetting_db.exists() or not index_db.exists():
+            return
+
+        try:
+            # 读取高频访问的记忆 ID
+            forgetting_conn = sqlite3.connect(str(forgetting_db))
+            high_freq = forgetting_conn.execute(
+                "SELECT memory_id, recall_count FROM forgetting_state WHERE recall_count >= ? ORDER BY recall_count DESC LIMIT ?",
+                (self._auto_threshold, self._max_cache_size)
+            ).fetchall()
+            forgetting_conn.close()
+
+            if not high_freq:
+                logger.info("KV Cache: no high-frequency memories found (threshold=%d)", self._auto_threshold)
+                return
+
+            # 从主索引加载记忆内容
+            index_conn = sqlite3.connect(str(index_db))
+            synced = 0
+            for memory_id, recall_count in high_freq:
+                row = index_conn.execute(
+                    "SELECT memory_id, content, type, confidence FROM memory_index WHERE memory_id LIKE ?",
+                    (f"{memory_id}%",)
+                ).fetchone()
+
+                if row:
+                    mid, content, mtype, confidence = row
+                    pattern = {
+                        "key": mid,
+                        "content": content,
+                        "metadata": {"type": mtype, "confidence": confidence, "source": "forgetting_sync"},
+                        "source_memory_ids": [mid],
+                    }
+                    self._cache[mid] = pattern
+                    self._access_counts[mid] = recall_count
+                    self._persist_entry(mid, pattern)
+                    synced += 1
+
+            index_conn.close()
+
+            if synced > 0:
+                logger.info("KV Cache: synced %d high-frequency memories from forgetting DB", synced)
+
+        except Exception as e:
+            logger.warning("KV Cache sync from forgetting DB failed: %s", e)
 
     # ─── 公开接口 ─────────────────────────────────────────────
 

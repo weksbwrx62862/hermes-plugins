@@ -1,0 +1,7 @@
+name: repo-chinese-names
+version: 1.1.0
+description: GitHub 仓库中文名映射 - 分类管理+模糊匹配+外部配置+CLI
+kind: backend
+phase: UTILITY
+dependencies: []
+entry_point: __init__.py

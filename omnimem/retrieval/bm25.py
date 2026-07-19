@@ -3,6 +3,7 @@
 使用 rank_bm25 库实现 BM25 算法，用于精确关键词匹配。
 改进：add() 使用缓冲区 + 延迟重建，避免 O(n²) 性能问题。
 OPT-6: 支持磁盘缓存，跨会话后快速恢复索引而无需全量重建。
+P0-SIGMOID: 查询长度自适应 sigmoid 归一化（借鉴 mem0 三信号融合设计）。
 """
 
 from __future__ import annotations
@@ -22,7 +23,57 @@ try:
 except ImportError:
     _HAS_JIEBA = False
 
+import math
+
+from omnimem.retrieval.base import RetrievalResult
+
 logger = logging.getLogger(__name__)
+
+
+# ★ P0-SIGMOID: 查询长度自适应 sigmoid 归一化参数（借鉴 mem0）
+# 不同长度的查询，BM25 原始分数分布差异很大：
+# - 短查询（1-3词）：分数集中度高，midpoint 较低
+# - 长查询（16+词）：分数分散，midpoint 较高
+# sigmoid 将原始分数映射到 [0, 1]，便于跨通道融合
+_SIGMOID_PROFILES: list[tuple[int, int, float, float]] = [
+    # (min_tokens, max_tokens, midpoint, steepness)
+    (1, 3, 5.0, 0.7),     # 短查询：强区分，快速饱和
+    (4, 6, 7.0, 0.65),    # 中短查询
+    (7, 10, 9.0, 0.6),    # 中等查询
+    (11, 15, 11.0, 0.55), # 中长查询
+    (16, 999, 12.0, 0.5), # 长查询：温和归一化
+]
+
+
+def _sigmoid_params_for_query(query_len: int) -> tuple[float, float]:
+    """根据查询词数返回 (midpoint, steepness)。"""
+    for min_t, max_t, midpoint, steepness in _SIGMOID_PROFILES:
+        if min_t <= query_len <= max_t:
+            return midpoint, steepness
+    return 12.0, 0.5  # 默认：长查询参数
+
+
+def _sigmoid_normalize(raw_scores: list[float], query_len: int) -> list[float]:
+    """对 BM25 原始分数做查询长度自适应 sigmoid 归一化。
+
+    公式: σ(x) = 1 / (1 + exp(-steepness * (x - midpoint)))
+    效果:
+      - 远高于 midpoint 的分数 → 接近 1.0
+      - 远低于 midpoint 的分数 → 接近 0.0
+      - midpoint 附近的分数 → 灵敏区分
+
+    Args:
+        raw_scores: BM25 原始分数列表（与文档一一对应）
+        query_len: 查询词数量
+
+    Returns:
+        归一化后的分数列表，范围 (0, 1)
+    """
+    midpoint, steepness = _sigmoid_params_for_query(query_len)
+    return [
+        1.0 / (1.0 + math.exp(-steepness * (s - midpoint)))
+        for s in raw_scores
+    ]
 
 
 # ★ 高频噪声词集合（IDF值极低，会稀释有效词的区分度）
@@ -72,7 +123,7 @@ def _load_common_zh_words() -> set[str]:
         os.path.dirname(os.path.dirname(__file__)), "config", "zh_words.json"
     )
     try:
-        with open(config_path, "r", encoding="utf-8") as f:
+        with open(config_path, encoding="utf-8") as f:
             external: list[str] = json.load(f)
         if isinstance(external, list):
             return set(external)
@@ -106,7 +157,8 @@ def _tokenize(text: str) -> list[str]:
 
     _ensure_common_zh_words()
     raw_tokens = []
-    raw_tokens.extend(re.findall(r"[a-zA-Z0-9]{2,}", text.lower()))
+    # ★ v9: 保留单个数字（原 [a-zA-Z0-9]{2,} 会丢弃 "3"/"7" 等关键数字）
+    raw_tokens.extend(re.findall(r"[a-zA-Z]{2,}|\d+", text.lower()))
 
     zh_chars = re.findall(r"[\u4e00-\u9fff]+", text)
     for segment in zh_chars:
@@ -168,6 +220,24 @@ class BM25Retriever:
         self._cache_loaded = False
         self._load_from_disk()
 
+    @property
+    def name(self) -> str:
+        """检索通道名称（兼容 BaseRetriever 接口）。"""
+        return "bm25"
+
+    def search_sync(self, query: str, **kwargs: Any) -> RetrievalResult:
+        """同步检索，返回统一 RetrievalResult（兼容 BaseRetriever）。"""
+        top_k = kwargs.get("top_k", 10)
+        results = self.search(query, top_k=top_k)
+        scores = [float(r.get("score", 0.0)) for r in results]
+        return RetrievalResult(results=results, scores=scores, channel=self.name)
+
+    async def asearch(self, query: str, **kwargs: Any) -> RetrievalResult:
+        """异步检索包装（兼容 BaseRetriever）。"""
+        import asyncio
+
+        return await asyncio.to_thread(self.search_sync, query, **kwargs)
+
     def add(self, content: str, memory_id: str, metadata: dict[str, Any]) -> None:
         """添加文档到 BM25 缓冲区。达到阈值时自动刷新。"""
         entry = dict(metadata)
@@ -201,12 +271,17 @@ class BM25Retriever:
         with self._lock:
             if self._buffer:
                 self._flush_buffer()
+            self._ensure_built()
 
     def search(self, query: str, top_k: int = 10) -> list[dict[str, Any]]:
-        """BM25 关键词检索。搜索前同步刷新缓冲区，确保新写入条目可被检索。"""
+        """BM25 关键词检索。搜索前同步刷新缓冲区，确保新写入条目可被检索。
+
+        P0-SIGMOID: 最终分数经 sigmoid 归一化到 [0, 1]，便于跨通道融合。
+        """
         with self._lock:
             if self._buffer:
                 self._flush_buffer()
+            self._ensure_built()
 
         if not self._bm25 or not self._corpus:
             return []
@@ -214,6 +289,7 @@ class BM25Retriever:
             query_tokens = _tokenize(query)
             if not query_tokens:
                 return []
+            query_len = len(query_tokens)
             scores = self._bm25.get_scores(query_tokens)
             # ★ Step 1: 先基于原始 BM25 分数做阈值过滤（不受加权影响）
             if scores is not None and len(scores) > 0:
@@ -280,8 +356,17 @@ class BM25Retriever:
                         noise_ratio = len(noise_overlap) / len(query_set)
                         score *= 1.0 - 0.3 * noise_ratio
 
-                    entry["score"] = float(score)
+                    entry["raw_bm25_score"] = float(score)  # 保留原始加权分数（调试用）
                     results.append(entry)
+
+            # ★ P0-SIGMOID Step 3: 对所有结果做 sigmoid 归一化到 [0, 1]
+            # 这确保 BM25 分数与向量相似度分数在同一量纲上，便于融合
+            if results:
+                weighted_scores = [r["raw_bm25_score"] for r in results]
+                normalized = _sigmoid_normalize(weighted_scores, query_len)
+                for i, norm_score in enumerate(normalized):
+                    results[i]["score"] = round(norm_score, 6)
+
             return results
         except Exception as e:
             logger.warning("BM25 search failed: %s", e)
@@ -292,6 +377,7 @@ class BM25Retriever:
         with self._lock:
             if self._buffer:
                 self._flush_buffer()
+            self._ensure_built()
             self._save_to_disk()
 
     @property
@@ -309,8 +395,7 @@ class BM25Retriever:
         with self._lock:
             self._corpus.append(tokens)
             self._documents.append({"memory_id": doc_id, "content": text})
-            self._rebuild()
-            self._dirty = True
+            self._dirty = True  # 延迟重建，不在写入路径上 O(N)
 
     def delete(self, memory_id: str) -> None:
         """从 BM25 索引中删除指定条目。"""
@@ -324,10 +409,72 @@ class BM25Retriever:
                     if idx < len(self._corpus):
                         self._corpus.pop(idx)
                     self._documents.pop(idx)
-                self._rebuild()
+                self._dirty = True  # 延迟重建
+
+    def update_from_entries(self, entries: list[dict[str, Any]]) -> dict[str, int]:
+        """增量更新 BM25 索引：仅新增、修改或删除发生变化的条目，避免全量重建。
+
+        Returns:
+            {"added": int, "updated": int, "deleted": int}
+        """
+        with self._lock:
+            current_ids = {doc.get("memory_id", "") for doc in self._documents}
+            new_entries = {e.get("memory_id", ""): e for e in entries if e.get("memory_id")}
+            ids_to_delete = current_ids - set(new_entries.keys())
+
+            # 删除已不在 entries 中的旧条目
+            for mid in list(ids_to_delete):
+                indices_to_remove = [
+                    i for i, doc in enumerate(self._documents)
+                    if doc.get("memory_id") == mid
+                ]
+                for idx in reversed(indices_to_remove):
+                    if idx < len(self._corpus):
+                        self._corpus.pop(idx)
+                    self._documents.pop(idx)
+                if indices_to_remove:
+                    self._dirty = True
+
+            added = 0
+            updated = 0
+            for mid, entry in new_entries.items():
+                content = entry.get("content", "") or entry.get("summary", "")
+                if not content:
+                    continue
+                new_hash = hashlib.md5(content.encode()).hexdigest()
+                existing_index = next(
+                    (i for i, doc in enumerate(self._documents) if doc.get("memory_id") == mid),
+                    None,
+                )
+                if existing_index is not None:
+                    old_content = self._documents[existing_index].get("content", "")
+                    if hashlib.md5(old_content.encode()).hexdigest() == new_hash:
+                        continue
+                    # 内容变化：删除旧文档后新增
+                    if existing_index < len(self._corpus):
+                        self._corpus.pop(existing_index)
+                    self._documents.pop(existing_index)
+                    updated += 1
+                    self._dirty = True
+                tokens = _tokenize(content)
+                self._corpus.append(tokens)
+                self._documents.append({"memory_id": mid, "content": content})
+                added += 1
                 self._dirty = True
 
+            if self._buffer:
+                self._flush_buffer()
+            self._ensure_built()
+            self._save_to_disk()
+            return {"added": added, "updated": updated, "deleted": len(ids_to_delete)}
+
     def rebuild_from_entries(self, entries: list[dict[str, Any]]) -> int:
+        """全量重建 BM25 索引（兼容旧接口）。
+
+        内部优先使用增量更新，仅在索引为空或显式需要清空时全量重建。
+        """
+        if self._documents or self._buffer:
+            return sum(self.update_from_entries(entries).values())
         with self._lock:
             self._corpus.clear()
             self._documents.clear()
@@ -339,14 +486,10 @@ class BM25Retriever:
             content = entry.get("content", "") or entry.get("summary", "")
             memory_id = entry.get("memory_id", "")
             if content and memory_id:
-                existing_ids = {doc.get("memory_id", ""): i for i, doc in enumerate(self._documents)}
-                if memory_id in existing_ids:
-                    old_content = self._documents[existing_ids[memory_id]].get("content", "")
-                    if hashlib.md5(old_content.encode()).hexdigest() != hashlib.md5(content.encode()).hexdigest():
-                        self.delete(memory_id)
                 self.add_document(memory_id, content)
                 rebuilt += 1
         with self._lock:
+            self._ensure_built()
             self._dirty = False
         return rebuilt
 
@@ -355,16 +498,25 @@ class BM25Retriever:
         return self._cache_loaded
 
     def _flush_buffer(self) -> None:
+        """将缓冲区合并到主索引，但不立即重建 BM25（延迟到搜索时）。"""
         for entry in self._buffer:
             tokens = entry.pop("_tokens", [])
             self._corpus.append(tokens)
             self._documents.append(entry)
         self._buffer.clear()
-        # ★ P3 LRU淘汰：超出上限时删除最旧文档
-        while len(self._documents) > self._max_documents:
-            self._corpus.pop(0)
-            self._documents.pop(0)
-        self._rebuild()
+        # ★ P3 LRU淘汰：超出上限时删除最旧文档（使用切片替代 pop(0) 避免 O(n) 开销）
+        excess = len(self._documents) - self._max_documents
+        if excess > 0:
+            self._corpus = self._corpus[excess:]
+            self._documents = self._documents[excess:]
+        # 标记需要重建，但不立即执行（延迟到 search 时）
+        self._dirty = True
+
+    def _ensure_built(self) -> None:
+        """确保 BM25 索引已构建（延迟重建，避免每次 flush 都 O(N)）。"""
+        if self._dirty or self._bm25 is None:
+            self._rebuild()
+            self._dirty = False
 
     def _rebuild(self) -> None:
         """重建 BM25 索引。"""
@@ -412,14 +564,14 @@ class BM25Retriever:
         if cache_path is None or not cache_path.exists():
             return
         try:
-            with open(cache_path, "r", encoding="utf-8") as f:
+            with open(cache_path, encoding="utf-8") as f:
                 cached = json.load(f)
             if cached.get("version") != self.CACHE_VERSION:
                 logger.warning("BM25 disk cache version mismatch (expected %d, got %d), rebuilding", self.CACHE_VERSION, cached.get("version", 0))
                 try:
                     cache_path.unlink()
                 except OSError:
-                    pass
+                    logger.debug("BM25: failed to delete stale cache file %s", cache_path)
                 return
             self._corpus = cached.get("corpus", [])
             self._documents = cached.get("documents", [])

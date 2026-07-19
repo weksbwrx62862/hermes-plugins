@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -23,6 +24,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from omnimem.utils.metrics import (
+    get_alert_manager,
+    record_saga_dead_letter,
+    set_saga_pending_count,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +45,7 @@ class SagaStep:
 
     name: str
     action: Callable[[], Any]
+    compensate: Callable[[], Any] | None = None
 
 
 @dataclass
@@ -65,7 +73,8 @@ class SagaCoordinator:
     def __init__(self, pending_path: Path | None = None,
                  max_retry: int = _MAX_RETRY_COUNT,
                  base_backoff: float = _BASE_BACKOFF_SECONDS,
-                 max_backoff: float = _MAX_BACKOFF_SECONDS):
+                 max_backoff: float = _MAX_BACKOFF_SECONDS,
+                 circuit_breaker_threshold: int = 5):
         """初始化 Saga 协调器。
 
         Args:
@@ -73,6 +82,7 @@ class SagaCoordinator:
             max_retry: 最大重试次数，超限后丢弃。
             base_backoff: 指数退避基础间隔（秒）。
             max_backoff: 最大退避间隔（秒）。
+            circuit_breaker_threshold: 连续失败达到此阈值时触发熔断，暂停重试。
         """
         self._pending: list[dict[str, Any]] = []
         self._pending_path = pending_path
@@ -81,13 +91,17 @@ class SagaCoordinator:
         self._max_backoff = max_backoff
         self._total_retries = 0
         self._dead_letters: list[dict[str, Any]] = []
+        # 熔断器状态
+        self._circuit_breaker_threshold = circuit_breaker_threshold
+        self._consecutive_failures = 0
+        self._circuit_open = False
         if pending_path and pending_path.exists():
             self._load_pending()
 
     def execute(self, memory_id: str, steps: list[SagaStep]) -> SagaResult:
         """执行 Saga 事务。
 
-        按顺序执行 steps，任一失败即停止，记录已完成的步骤和失败步骤。
+        按顺序执行 steps，任一失败即停止，执行已完成步骤的补偿回调。
         成功执行的步骤返回值会被收集到 SagaResult.step_results 中。
 
         Args:
@@ -97,12 +111,27 @@ class SagaCoordinator:
         Returns:
             SagaResult，包含成功/失败状态、步骤详情和各步骤返回值
         """
+        # 熔断器检查：连续失败过多时暂停执行
+        if self._circuit_open:
+            logger.warning(
+                "Saga circuit breaker OPEN for %s (consecutive failures=%d) — skipping",
+                memory_id, self._consecutive_failures,
+            )
+            return SagaResult(
+                success=False,
+                memory_id=memory_id,
+                failed_step="__circuit_breaker__",
+                error=f"circuit breaker open after {self._consecutive_failures} consecutive failures",
+            )
+
         completed: list[str] = []
+        completed_steps: list[SagaStep] = []
         step_results: dict[str, Any] = {}
         for step in steps:
             try:
                 result = step.action()
                 completed.append(step.name)
+                completed_steps.append(step)
                 step_results[step.name] = result
                 logger.warning("Saga step '%s' OK for %s", step.name, memory_id)
             except Exception as e:
@@ -112,6 +141,26 @@ class SagaCoordinator:
                     memory_id,
                     e,
                 )
+                # 执行已完成步骤的补偿回调（逆序）
+                self._run_compensations(memory_id, completed_steps)
+                # 更新熔断器计数
+                self._consecutive_failures += 1
+                if self._consecutive_failures >= self._circuit_breaker_threshold:
+                    self._circuit_open = True
+                    logger.error(
+                        "Saga circuit breaker TRIPPED after %d consecutive failures",
+                        self._consecutive_failures,
+                    )
+                    # 触发熔断告警
+                    get_alert_manager().fire(
+                        name="saga_circuit_breaker_tripped",
+                        severity="critical",
+                        message=f"Saga 熔断器已触发（连续失败 {self._consecutive_failures} 次）",
+                        consecutive_failures=self._consecutive_failures,
+                        threshold=self._circuit_breaker_threshold,
+                        memory_id=memory_id,
+                        failed_step=step.name,
+                    )
                 record = {
                     "memory_id": memory_id,
                     "failed_step": step.name,
@@ -122,6 +171,7 @@ class SagaCoordinator:
                 }
                 self._pending.append(record)
                 self._persist_pending()
+                set_saga_pending_count(len(self._pending))
                 return SagaResult(
                     success=False,
                     memory_id=memory_id,
@@ -130,12 +180,161 @@ class SagaCoordinator:
                     error=str(e),
                     step_results=step_results,
                 )
+        # 成功：重置熔断器计数
+        self._consecutive_failures = 0
+        self._circuit_open = False
         return SagaResult(
             success=True,
             memory_id=memory_id,
             completed_steps=completed,
             step_results=step_results,
         )
+
+    async def async_execute(self, steps: list[SagaStep], context: dict[str, Any]) -> dict[str, Any]:
+        """异步执行 Saga 事务。
+
+        与同步 execute 逻辑一致，但：
+          - 异步 action/compensate 直接 await
+          - 同步 action/compensate 使用 asyncio.to_thread 包装，避免阻塞事件循环
+          - 保持相同的熔断器和重试逻辑
+
+        Args:
+            steps: Saga 步骤列表（SagaStep，action/compensate 可为同步或异步函数）
+            context: 上下文字典，需包含 "memory_id" 键
+
+        Returns:
+            SagaResult 的字典表示，包含 success/memory_id/completed_steps/
+            failed_step/error/step_results 字段
+        """
+        memory_id = context.get("memory_id", "")
+
+        # 熔断器检查：连续失败过多时暂停执行
+        if self._circuit_open:
+            logger.warning(
+                "Saga async circuit breaker OPEN for %s (consecutive failures=%d) — skipping",
+                memory_id, self._consecutive_failures,
+            )
+            return {
+                "success": False,
+                "memory_id": memory_id,
+                "completed_steps": [],
+                "failed_step": "__circuit_breaker__",
+                "error": f"circuit breaker open after {self._consecutive_failures} consecutive failures",
+                "step_results": {},
+            }
+
+        completed: list[str] = []
+        completed_steps: list[SagaStep] = []
+        step_results: dict[str, Any] = {}
+
+        for step in steps:
+            try:
+                # ★ 判断 action 是同步还是异步，分别处理
+                if asyncio.iscoroutinefunction(step.action):
+                    result = await step.action()
+                else:
+                    result = await asyncio.to_thread(step.action)
+                completed.append(step.name)
+                completed_steps.append(step)
+                step_results[step.name] = result
+                logger.warning("Saga async step '%s' OK for %s", step.name, memory_id)
+            except Exception as e:
+                logger.warning(
+                    "Saga async step '%s' failed for %s: %s",
+                    step.name, memory_id, e,
+                )
+                # 异步执行已完成步骤的补偿回调（逆序）
+                await self._async_run_compensations(memory_id, completed_steps)
+                # 更新熔断器计数
+                self._consecutive_failures += 1
+                if self._consecutive_failures >= self._circuit_breaker_threshold:
+                    self._circuit_open = True
+                    logger.error(
+                        "Saga async circuit breaker TRIPPED after %d consecutive failures",
+                        self._consecutive_failures,
+                    )
+                    get_alert_manager().fire(
+                        name="saga_circuit_breaker_tripped",
+                        severity="critical",
+                        message=f"Saga 异步熔断器已触发（连续失败 {self._consecutive_failures} 次）",
+                        consecutive_failures=self._consecutive_failures,
+                        threshold=self._circuit_breaker_threshold,
+                        memory_id=memory_id,
+                        failed_step=step.name,
+                        phase="async",
+                    )
+                record = {
+                    "memory_id": memory_id,
+                    "failed_step": step.name,
+                    "completed_steps": completed,
+                    "error": str(e),
+                    "retry_count": 0,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+                self._pending.append(record)
+                self._persist_pending()
+                set_saga_pending_count(len(self._pending))
+                return {
+                    "success": False,
+                    "memory_id": memory_id,
+                    "completed_steps": completed,
+                    "failed_step": step.name,
+                    "error": str(e),
+                    "step_results": step_results,
+                }
+
+        # 成功：重置熔断器计数
+        self._consecutive_failures = 0
+        self._circuit_open = False
+        return {
+            "success": True,
+            "memory_id": memory_id,
+            "completed_steps": completed,
+            "step_results": step_results,
+        }
+
+    async def _async_run_compensations(self, memory_id: str, completed_steps: list[SagaStep]) -> None:
+        """异步逆序执行已完成步骤的补偿回调。
+
+        补偿函数可为同步或异步：
+          - 异步函数直接 await
+          - 同步函数使用 asyncio.to_thread 包装
+        """
+        for step in reversed(completed_steps):
+            if step.compensate is not None:
+                try:
+                    if asyncio.iscoroutinefunction(step.compensate):
+                        await step.compensate()
+                    else:
+                        await asyncio.to_thread(step.compensate)
+                    logger.info(
+                        "Saga async compensate '%s' OK for %s", step.name, memory_id,
+                    )
+                except Exception as ce:
+                    logger.warning(
+                        "Saga async compensate '%s' failed for %s: %s",
+                        step.name, memory_id, ce,
+                    )
+
+    def _run_compensations(self, memory_id: str, completed_steps: list[SagaStep]) -> None:
+        """逆序执行已完成步骤的补偿回调。"""
+        for step in reversed(completed_steps):
+            if step.compensate is not None:
+                try:
+                    step.compensate()
+                    logger.info(
+                        "Saga compensate '%s' OK for %s", step.name, memory_id,
+                    )
+                except Exception as ce:
+                    logger.warning(
+                        "Saga compensate '%s' failed for %s: %s",
+                        step.name, memory_id, ce,
+                    )
+
+    def reset_circuit_breaker(self) -> None:
+        """手动重置熔断器状态。"""
+        self._consecutive_failures = 0
+        self._circuit_open = False
 
     def get_pending(self) -> list[dict[str, Any]]:
         """获取所有待重试的 pending 记录。"""
@@ -170,6 +369,14 @@ class SagaCoordinator:
         if not self._pending:
             return 0
 
+        # 熔断器检查
+        if self._circuit_open:
+            logger.warning(
+                "Saga retry skipped — circuit breaker open (consecutive failures=%d)",
+                self._consecutive_failures,
+            )
+            return 0
+
         label = "retry" if backoff_enabled else "auto-retry"
         fixed = 0
         still_pending: list[dict[str, Any]] = []
@@ -192,6 +399,19 @@ class SagaCoordinator:
                     "Saga record %s step '%s' exceeded max retry (%d) — moved to dead_letter. Error: %s",
                     memory_id, failed_step, self._max_retry, record.get("error", "unknown"),
                 )
+                # 记录 dead_letter 指标并触发告警
+                record_saga_dead_letter()
+                get_alert_manager().fire(
+                    name="saga_dead_letter_accumulation",
+                    severity="warning",
+                    message=f"Saga 记录 {memory_id} 步骤 '{failed_step}' 超过最大重试次数 ({self._max_retry})，已转入 dead_letter",
+                    memory_id=memory_id,
+                    failed_step=failed_step,
+                    retry_count=retry_count,
+                    max_retry=self._max_retry,
+                    error=record.get("error", "unknown"),
+                    dead_letter_count=len(self._dead_letters),
+                )
                 continue
 
             if backoff_enabled:
@@ -202,6 +422,7 @@ class SagaCoordinator:
                 action(memory_id)
                 logger.info("Saga %s OK: %s step '%s' (attempt %d)", label, memory_id, failed_step, retry_count + 1)
                 self._total_retries += 1
+                self._consecutive_failures = 0  # 成功时重置
                 fixed += 1
             except Exception as e:
                 record["retry_count"] = retry_count + 1
@@ -211,10 +432,33 @@ class SagaCoordinator:
                     label, memory_id, failed_step, retry_count + 1, self._max_retry, e,
                 )
                 self._total_retries += 1
+                self._consecutive_failures += 1
+                if self._consecutive_failures >= self._circuit_breaker_threshold:
+                    self._circuit_open = True
+                    logger.error(
+                        "Saga circuit breaker TRIPPED during retry after %d consecutive failures",
+                        self._consecutive_failures,
+                    )
+                    # 触发熔断告警（重试期间）
+                    get_alert_manager().fire(
+                        name="saga_circuit_breaker_tripped",
+                        severity="critical",
+                        message=f"Saga 熔断器在重试期间触发（连续失败 {self._consecutive_failures} 次）",
+                        consecutive_failures=self._consecutive_failures,
+                        threshold=self._circuit_breaker_threshold,
+                        memory_id=memory_id,
+                        failed_step=failed_step,
+                        phase="retry",
+                    )
+                    # 熔断：剩余 pending 不再重试
+                    still_pending.append(record)
+                    still_pending.extend(self._pending[self._pending.index(record) + 1:])
+                    break
                 still_pending.append(record)
 
         self._pending = still_pending
         self._persist_pending()
+        set_saga_pending_count(len(self._pending))
         return fixed
 
     def retry_pending(
@@ -252,6 +496,7 @@ class SagaCoordinator:
         count = len(self._pending)
         self._pending.clear()
         self._persist_pending()
+        set_saga_pending_count(0)
         return count
 
     # ─── 持久化 ─────────────────────────────────────────────

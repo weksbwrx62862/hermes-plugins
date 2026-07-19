@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from omnimem.deep.knowledge_graph import extract_entities
+from omnimem.deep.kg import extract_entities
 
 
 class TestBareNameExtraction(unittest.TestCase):

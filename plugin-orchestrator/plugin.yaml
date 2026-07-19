@@ -1,0 +1,9 @@
+name: plugin-orchestrator
+version: 1.0.0
+description: "Plugin 编排器 — 插件间共享上下文、事件总线、钩子优先级、跨插件管道。让插件从各自为政变为有机协作。"
+kind: backend
+author: xxh
+hermes_compat: ">=2.0.0"
+phase: UTILITY
+dependencies: []
+entry_point: __init__.py

@@ -180,7 +180,7 @@ def _generate_mental_model(observations: list[str]) -> str:
 class ConsolidationEngine:
     """Consolidation 管线：事实 → 经验 → 观察 → 心智模型。"""
 
-    def __init__(self, data_dir: Path | None = None, fact_threshold: int = 10, llm_client: Any | None = None):
+    def __init__(self, data_dir: Path | None = None, fact_threshold: int = 3, llm_client: Any | None = None):
         self._data_dir = data_dir
         self._fact_threshold = fact_threshold
         self._llm_client = llm_client

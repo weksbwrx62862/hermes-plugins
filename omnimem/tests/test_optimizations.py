@@ -13,13 +13,12 @@ import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from unittest.mock import MagicMock, PropertyMock, patch
+from unittest.mock import MagicMock, patch
 
+from omnimem.config import OmniMemConfig
+from omnimem.memory.drawer_closet import DrawerClosetStore
 from omnimem.provider import OmniMemProvider
 from omnimem.retrieval.engine import HybridRetriever
-from omnimem.memory.drawer_closet import DrawerClosetStore
-from omnimem.config import OmniMemConfig
-
 
 # ──────────────────────────────────────────────
 # Provider: Facade __getattr__/__setattr__ 代理
@@ -162,15 +161,19 @@ class TestFacadeAttrProxy(unittest.TestCase):
         self.assertEqual(provider._turn_count, 0)
 
     def test_facade_attr_map_completeness(self) -> None:
+        # 显式属性赋值替代了 _FACADE_ATTR_MAP 动态代理
+        # 验证类型注解中声明的所有属性在初始化方法中都有显式赋值
         expected_storage = {"_soul", "_core_block", "_budget", "_wing_room", "_store", "_index", "_md_store"}
         expected_retrieval = {"_retriever", "_context_manager", "_perception", "_feedback", "_prefetch_lock", "_reflect_cache", "_prefetch_executor"}
-        expected_governance = {"_conflict_resolver", "_temporal_decay", "_forgetting", "_privacy", "_provenance", "_sync_engine", "_vector_clock", "_auditor", "_audit_logger", "_rbac"}
+        expected_governance = {"_conflict_resolver", "_temporal_decay", "_forgetting", "_privacy", "_provenance", "_sync_engine", "_vector_clock", "_auditor", "_audit_logger", "_rbac", "_temporal_kg"}
         expected_sync = {"_saga", "_bg_executor", "_store_service", "_kv_cache", "_lora_trainer"}
         expected_deep = {"_consolidation", "_knowledge_graph", "_reflect_engine"}
 
-        all_mapped = set(OmniMemProvider._FACADE_ATTR_MAP.keys())
         all_expected = expected_storage | expected_retrieval | expected_governance | expected_sync | expected_deep
-        self.assertEqual(all_mapped, all_expected)
+        # 检查类型注解中声明了这些属性
+        annotated = {name for name in OmniMemProvider.__annotations__ if name.startswith("_")}
+        for attr in all_expected:
+            self.assertIn(attr, annotated, f"属性 {attr} 未在类型注解中声明")
 
 
 # ──────────────────────────────────────────────
@@ -408,7 +411,7 @@ class TestSynonymExternalization(unittest.TestCase):
 
     def test_synonym_map_initialized_in_constructor(self) -> None:
         hybrid = HybridRetriever(data_dir=Path("/tmp/omnimem_test_syn1"))
-        self.assertIsInstance(hybrid._SYNONYM_MAP, dict)
+        self.assertIsInstance(hybrid._synonym_map, dict)
 
 
 # ──────────────────────────────────────────────

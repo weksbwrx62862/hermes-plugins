@@ -15,13 +15,10 @@ import json
 import logging
 import sqlite3
 import threading
-import time
 from pathlib import Path
-from typing import Any
 
 import faiss
 import numpy as np
-
 from omnimem.retrieval.vector_store import VectorStore, _CachedEmbeddingFunction
 
 logger = logging.getLogger(__name__)
@@ -93,15 +90,36 @@ class FAISSStore(VectorStore):
             texts = [d[1] for d in docs]
             try:
                 embeddings = self._embedding_fn(texts)
-                vectors = np.array(embeddings, dtype=np.float32)
-                if vectors.ndim == 2 and vectors.shape[1] > 0:
-                    self._dimension = vectors.shape[1]
-                    self._index = faiss.IndexFlatIP(self._dimension)  # Inner Product (余弦相似度需归一化)
-                    faiss.normalize_L2(vectors)
-                    self._index.add(vectors)
-                    logger.info("FAISSStore: rebuilt index from %d cached embeddings", len(texts))
-                    self._save_index()
-                    return
+                # 过滤不同维度的嵌入（来自不同模型的脏数据）
+                valid_embeddings = []
+                valid_indices = []
+                filtered_count = 0
+                for i, emb in enumerate(embeddings):
+                    if isinstance(emb, (list, tuple)) and len(emb) == self._dimension:
+                        valid_embeddings.append(emb)
+                        valid_indices.append(i)
+                    else:
+                        filtered_count += 1
+                        logger.warning("FAISSStore: skipped embedding at idx %d (dim=%s, expected=%d)",
+                                   i, len(emb) if hasattr(emb, '__len__') else 'N/A', self._dimension)
+                if filtered_count > 0:
+                    logger.warning(
+                        "FAISSStore: _build_index_from_db 过滤了 %d/%d 条维度不匹配的嵌入 (expected=%d)",
+                        filtered_count, len(embeddings), self._dimension,
+                    )
+
+                if valid_embeddings:
+                    vectors = np.array(valid_embeddings, dtype=np.float32)
+                    if vectors.ndim == 2 and vectors.shape[1] == self._dimension:
+                        self._index = faiss.IndexFlatIP(self._dimension)
+                        faiss.normalize_L2(vectors)
+                        self._index.add(vectors)
+                        # 更新 id_map 只保留有效条目
+                        self._id_map = [self._id_map[i] for i in valid_indices]
+                        logger.info("FAISSStore: rebuilt index from %d/%d cached embeddings",
+                                   len(valid_embeddings), len(texts))
+                        self._save_index()
+                        return
             except Exception as e:
                 logger.warning("FAISSStore: embedding rebuild failed: %s", e)
         # Fallback: 空索引
@@ -121,7 +139,24 @@ class FAISSStore(VectorStore):
         if self._embedding_fn is None:
             raise RuntimeError("FAISSStore: no embedding function configured")
         embeddings = self._embedding_fn(texts)
-        vectors = np.array(embeddings, dtype=np.float32)
+        # 过滤维度不匹配的嵌入
+        valid = []
+        filtered_count = 0
+        for i, emb in enumerate(embeddings):
+            if isinstance(emb, (list, tuple)) and len(emb) == self._dimension:
+                valid.append(emb)
+            else:
+                filtered_count += 1
+                logger.warning("FAISSStore: skipped embedding at idx %d in _embed (dim=%s, expected=%d)",
+                             i, len(emb) if hasattr(emb, '__len__') else 'N/A', self._dimension)
+        if filtered_count > 0:
+            logger.warning(
+                "FAISSStore: _embed 过滤了 %d/%d 条维度不匹配的嵌入 (expected=%d)",
+                filtered_count, len(embeddings), self._dimension,
+            )
+        if not valid:
+            raise RuntimeError("FAISSStore: no valid embeddings produced")
+        vectors = np.array(valid, dtype=np.float32)
         if vectors.ndim == 1:
             vectors = vectors.reshape(1, -1)
         faiss.normalize_L2(vectors)
@@ -144,12 +179,6 @@ class FAISSStore(VectorStore):
 
                 # Upsert: 先删除已存在的，再添加
                 for i, mid in enumerate(ids):
-                    if mid in self._id_map:
-                        old_idx = self._id_map.index(mid)
-                        # FAISS IndexFlat 不支持原地删除，标记为需要重建
-                        # 用 replace 策略：记录新向量，后续 rebuild
-                        pass
-
                     # 写入 SQLite
                     meta_json = json.dumps(metadatas[i], ensure_ascii=False) if metadatas else "{}"
                     self._meta_conn.execute(
@@ -159,10 +188,8 @@ class FAISSStore(VectorStore):
 
                 self._meta_conn.commit()
 
-                # 简单策略：直接添加到索引（允许重复，搜索时去重）
-                self._index.add(vectors)
-                self._id_map.extend(ids)
-                self._save_index()
+                # 重建索引以清除重复条目
+                self._rebuild_index()
 
             except Exception as e:
                 logger.warning("FAISSStore add failed: %s", e)
@@ -170,6 +197,10 @@ class FAISSStore(VectorStore):
 
     def _rebuild_with_new_dim(self) -> None:
         """维度变化时从 SQLite 重建索引。"""
+        # 释放旧索引的 C++ 内存
+        if self._index is not None:
+            del self._index
+            self._index = None
         rows = self._meta_conn.execute("SELECT id, document FROM metadata ORDER BY rowid").fetchall()
         if not rows:
             return
@@ -246,6 +277,10 @@ class FAISSStore(VectorStore):
 
     def _rebuild_index(self) -> None:
         """从 SQLite 重建 FAISS 索引（删除后必需）。"""
+        # 释放旧索引的 C++ 内存
+        if self._index is not None:
+            del self._index
+            self._index = None
         rows = self._meta_conn.execute("SELECT id, document FROM metadata ORDER BY rowid").fetchall()
         self._id_map = [r[0] for r in rows]
         if not rows:
@@ -267,6 +302,7 @@ class FAISSStore(VectorStore):
         try:
             return self._meta_conn.execute("SELECT COUNT(*) FROM metadata").fetchone()[0]
         except Exception:
+            logger.warning("FAISSStore: count() failed", exc_info=True)
             return 0
 
     def reset(self) -> None:
@@ -280,3 +316,17 @@ class FAISSStore(VectorStore):
                 self._save_index()
             except Exception as e:
                 logger.warning("FAISSStore reset failed: %s", e)
+
+    def close(self) -> None:
+        """释放 FAISS 索引和 SQLite 连接。"""
+        with self._lock:
+            if self._index is not None:
+                del self._index
+                self._index = None
+            if hasattr(self, '_meta_conn') and self._meta_conn:
+                try:
+                    self._meta_conn.close()
+                except Exception as e:
+                    logger.warning("FAISSStore close failed: %s", e)
+            self._id_map = []
+            self._initialized = False

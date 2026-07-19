@@ -1,14 +1,13 @@
 import gc
-import sys
-import threading
 import logging
+import threading
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
 class MemoryMonitor:
-    def __init__(self, interval: float = 60.0, warning_mb: float = 1200.0):
+    def __init__(self, interval: float = 60.0, warning_mb: float = 5000.0):
         self._interval = interval
         self._warning_mb = warning_mb
         self._timer: threading.Timer | None = None
@@ -50,6 +49,10 @@ class MemoryMonitor:
         usage = self.get_usage()
         if usage["rss_mb"] > self._warning_mb:
             logger.warning("Memory usage: %.1fMB exceeds %.1fMB threshold", usage["rss_mb"], self._warning_mb)
+            # 主动触发垃圾回收
+            collected = gc.collect()
+            logger.info("GC collected %d objects", collected)
+            # 调用注册的回调函数
             for cb in self._callbacks:
                 try:
                     cb(usage)

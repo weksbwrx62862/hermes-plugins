@@ -112,30 +112,29 @@ class TestSemanticDedupService(unittest.TestCase):
 
     def test_search_candidates_vector(self) -> None:
         """向量搜索成功时返回向量结果。"""
-        self.retriever._vector = MagicMock()
-        self.retriever._vector.search.return_value = [
+        self.retriever.vector_search = MagicMock(return_value=[
             {"content": "vec result", "memory_id": "v1"}
-        ]
+        ])
         candidates = self.dedup.search_candidates("test content")
         self.assertEqual(len(candidates), 1)
 
     def test_search_candidates_fallback(self) -> None:
         """向量搜索失败时回退到 store search_by_content。"""
-        self.retriever._vector = None
+        self.retriever.vector_search = MagicMock(side_effect=Exception("vector unavailable"))
         self.store.search_by_content.return_value = [
             {"content": "store result", "memory_id": "s1"}
         ]
         candidates = self.dedup.search_candidates("test")
-        self.assertTrue(any("store result" == c.get("content", "") for c in candidates))
+        self.assertTrue(any(c.get("content", "") == "store result" for c in candidates))
 
     def test_search_candidates_long_mid_chunk(self) -> None:
         """长文本搜索时添加中间片段候选。"""
-        self.retriever._vector = None
+        self.retriever.vector_search = MagicMock(side_effect=Exception("vector unavailable"))
         self.store.search_by_content.return_value = [
             {"content": "prefix match", "memory_id": "s1"}
         ]
         content = "PREFIX_" + "X" * 80 + "_MIDDLE_" + "Y" * 30 + "_SUFFIX"
-        candidates = self.dedup.search_candidates(content)
+        self.dedup.search_candidates(content)
         # 第一次调用于content[:50]，因为content>100会再调用content[50:100]
         self.assertGreaterEqual(self.store.search_by_content.call_count, 1)
 

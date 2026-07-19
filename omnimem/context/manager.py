@@ -17,9 +17,9 @@ import json
 import logging
 import os
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from functools import lru_cache
-from collections.abc import Callable
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -103,7 +103,9 @@ class ContextManager:
         # 指纹 → 摘要映射，供 embedding 去重时获取原文
         self._fp_to_summary: dict[str, str] = {}
         # embedding 向量本地缓存（避免同一轮内重复计算）
+        # 使用 LRU 限制大小，每条约 1.5KB（384维 float 向量）
         self._embedding_cache: dict[str, list[float]] = {}
+        self._embedding_cache_max_size = 1000  # 最多缓存 1000 条
 
     def reset_for_new_turn(self) -> None:
         """每轮开始时重置注入状态。
@@ -119,6 +121,10 @@ class ContextManager:
         if fingerprint:
             self._persistent_fingerprints.add(fingerprint)
             self._injected_fingerprints.add(fingerprint)
+            # 限制持久指纹数量，防止无限增长
+            if len(self._persistent_fingerprints) > 500:
+                # 保留最新的 500 个指纹
+                self._persistent_fingerprints = set(list(self._persistent_fingerprints)[-500:])
 
     def get_injected_fingerprints(self) -> set[str]:
         """返回本轮已注入的摘要指纹集合（含持久指纹）。"""
@@ -208,12 +214,12 @@ class ContextManager:
     @staticmethod
     def refine_overview(raw_content: str, max_chars: int = 200) -> str:
         """将原始记忆内容精炼为结构化概览（L1 层）。
-        
+
         内化 OpenViking overview() 的设计：
         - L0 summary: 一句话核心事实（60 字）
         - L1 overview: 结构化概览，保留关键条件和上下文（200 字）
         - L2 full: 完整原文
-        
+
         策略：
         1. 如果内容 ≤ max_chars，直接返回
         2. 提取关键句子（含条件/因果/时序标记的句子）
@@ -222,7 +228,7 @@ class ContextManager:
         content = raw_content.strip()
         if len(content) <= max_chars:
             return content
-        
+
         # 剥离结构化标记
         for pattern, replacement in ContextManager._COMPRESSION_TEMPLATES:
             matched = re.search(pattern, content)
@@ -230,11 +236,11 @@ class ContextManager:
                 compressed = re.sub(pattern, replacement, content, count=1)
                 if len(compressed.strip()) <= max_chars:
                     return compressed.strip()
-        
+
         # 提取关键句子：含信号词的句子优先
         content_for_split = content.replace("\n", " ").replace("\r", " ")
         sentences = re.split(r"[。！？.!?]", content_for_split)
-        
+
         # 信号词权重
         signal_words = [
             "但是", "不过", "然而", "如果", "除非", "因为", "所以",
@@ -242,7 +248,7 @@ class ContextManager:
             "but", "however", "if", "because", "important", "note",
             "must", "should", "don't",
         ]
-        
+
         scored_sentences = []
         for s in sentences:
             s = s.strip()
@@ -254,13 +260,13 @@ class ContextManager:
                 if sw in s_lower:
                     score += 2
             scored_sentences.append((s, score))
-        
+
         # 按信号词权重降序 + 原文顺序排列
         # 使用 enumerate 保持原始顺序索引
         for idx, (s, score) in enumerate(scored_sentences):
             pass  # 已经在列表中
         scored_sentences.sort(key=lambda x: (-x[1], content_for_split.find(x[0])))
-        
+
         # 拼接到预算内
         result_parts = []
         used_chars = 0
@@ -270,11 +276,11 @@ class ContextManager:
                 used_chars += len(s) + 1
             else:
                 break
-        
+
         if not result_parts:
             # 回退：取前 max_chars
             return content_for_split[:max_chars].strip()
-        
+
         return "。".join(result_parts) + "。"
 
     # ─── 去重 (Dedup) ─────────────────────────────────────────
@@ -297,7 +303,7 @@ class ContextManager:
             os.path.dirname(os.path.dirname(__file__)), "config", "synonyms.json"
         )
         try:
-            with open(config_path, "r", encoding="utf-8") as f:
+            with open(config_path, encoding="utf-8") as f:
                 external = json.load(f)
             if isinstance(external, dict):
                 for key, val in external.items():
@@ -655,6 +661,15 @@ class ContextManager:
                         return True
         return False
 
+    def _trim_embedding_cache(self) -> None:
+        """当 embedding 缓存超过大小限制时，删除最旧的条目。"""
+        if len(self._embedding_cache) > self._embedding_cache_max_size:
+            # 删除最旧的条目（保留最新的 max_size 条）
+            keys = list(self._embedding_cache.keys())
+            keys_to_remove = keys[:len(keys) - self._embedding_cache_max_size]
+            for key in keys_to_remove:
+                del self._embedding_cache[key]
+
     def _embedding_similarity(self, text1: str, text2: str) -> float:
         """计算两条文本的 embedding 余弦相似度（带本地缓存）。"""
         if not text1 or not text2 or self._embedding_fn is None:
@@ -666,12 +681,14 @@ class ContextManager:
             vec1 = self._embedding_fn(text1)
             if vec1:
                 self._embedding_cache[text1] = vec1
+                self._trim_embedding_cache()
 
         vec2 = self._embedding_cache.get(text2)
         if vec2 is None:
             vec2 = self._embedding_fn(text2)
             if vec2:
                 self._embedding_cache[text2] = vec2
+                self._trim_embedding_cache()
 
         if not vec1 or not vec2:
             return 0.0
@@ -803,6 +820,14 @@ class ContextManager:
                     "wing": r.get("wing"),
                     "room": r.get("room"),
                     "stored_at": r.get("stored_at"),
+                    # ★ P0/P1证据组字段透传
+                    "entities": r.get("entities", []),
+                    "provenance": r.get("provenance", ""),
+                    "scope": r.get("scope", ""),
+                    "_evidence_enriched": r.get("_evidence_enriched", False),
+                    "_group_start": r.get("_group_start", False),
+                    "_group_size": r.get("_group_size", 0),
+                    "_conflict": r.get("_conflict"),
                 }
             )
 

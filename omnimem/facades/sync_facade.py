@@ -35,7 +35,7 @@ class SyncFacade:
             pending_path=gov_dir / "saga_pending.json"
         )
         # 后台任务执行器
-        self._bg_executor = BackgroundTaskExecutor(max_workers=2)
+        self._bg_executor = BackgroundTaskExecutor(max_workers=1)
 
         # 存储服务层
         self._store_service = MemoryStoreService(

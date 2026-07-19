@@ -15,24 +15,45 @@ logger = logging.getLogger(__name__)
 class CrossEncoderReranker:
     """Cross-Encoder 重排。"""
 
+    # ★ 全局模型缓存：避免每题重新加载（跨 OmniMemMemoryProvider 实例共享）
+    _global_model: Any = None
+    _global_model_name: str = ""
+
     def __init__(self, model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2", model_path: str = ""):
         self._model_name = model_name
         self._model_path = model_path
         self._model: Any = None
 
     def _ensure_model(self) -> bool:
-        """延迟加载 Cross-Encoder 模型。"""
+        """延迟加载 Cross-Encoder 模型，优先使用全局缓存。"""
         if self._model is not None:
             return True
+
+        # ★ 优先使用全局缓存
+        model_key = self._model_path or self._model_name
+        if CrossEncoderReranker._global_model is not None and CrossEncoderReranker._global_model_name == model_key:
+            self._model = CrossEncoderReranker._global_model
+            logger.info("Cross-Encoder 模型从全局缓存加载（跳过重复加载）")
+            return True
+
         try:
             # ROCm PyTorch 兼容性
             import torch.distributed as dist
             if not hasattr(dist, 'is_initialized'):
                 dist.is_initialized = lambda: False
+
+            # ★ 强制 CPU 模式，避免 CUDA 兼容性问题
+            import os
+            os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
+
             from sentence_transformers import CrossEncoder
 
-            model_path = self._model_path or self._model_name
-            self._model = CrossEncoder(model_path)
+            self._model = CrossEncoder(model_key, device="cpu")
+
+            # ★ 缓存到全局
+            CrossEncoderReranker._global_model = self._model
+            CrossEncoderReranker._global_model_name = model_key
+
             return True
         except ImportError:
             logger.warning("sentence_transformers not installed — reranking disabled")

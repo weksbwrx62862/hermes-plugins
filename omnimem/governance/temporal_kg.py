@@ -18,7 +18,7 @@ import logging
 import sqlite3
 import threading
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -26,6 +26,16 @@ from typing import Any
 from omnimem.utils.migration import SchemaMigrator
 
 logger = logging.getLogger(__name__)
+
+# 模块级共享锁：防止多个 TemporalKnowledgeGraph 实例并发写同一 temporal_kg.db
+# （GovernanceFacade + MemoryAPI 各持独立实例，实例级 RLock 无法互斥）
+_TEMPORAL_KG_LOCK = threading.RLock()
+
+# 类级连接共享：所有实例共用同一 temporal_kg.db 连接，防止多实例 SQLite 写锁冲突
+_shared_connections: dict[str, sqlite3.Connection] = {}
+
+# 引用计数：跟踪每个 db_path 有多少实例在使用，最后一个 close 时才真正关闭
+_connection_refcounts: dict[str, int] = {}
 
 
 @dataclass
@@ -83,23 +93,52 @@ class TemporalKnowledgeGraph:
       - 批量提交优化
     """
 
-    _BATCH_THRESHOLD = 5
+    _BATCH_THRESHOLD = 20  # 批量提交阈值提升到20，减少频繁 commit 的 I/O 开销
 
     def __init__(self, data_dir: Path, config: Any = None):
         self._data_dir = data_dir
         self._data_dir.mkdir(parents=True, exist_ok=True)
         self._db_path = self._data_dir / "temporal_kg.db"
         self._conn: sqlite3.Connection | None = None
-        self._lock = threading.RLock()
+        self._lock = _TEMPORAL_KG_LOCK  # 使用模块级共享锁
         self._pending_writes = 0
         self._init_db()
+        # 引用计数：跟踪使用该 db_path 的实例数
+        db_path_str = str(self._db_path)
+        _connection_refcounts[db_path_str] = _connection_refcounts.get(db_path_str, 0) + 1
+        logger.info(
+            "TemporalKnowledgeGraph: 实例创建, db=%s, 引用计数=%d, 共享连接数=%d",
+            self._db_path.name, _connection_refcounts[db_path_str], len(_shared_connections),
+        )
 
     def _init_db(self) -> None:
         """初始化时序知识图谱数据库。"""
-        self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
+        db_path_str = str(self._db_path)
+        if db_path_str in _shared_connections:
+            conn = _shared_connections[db_path_str]
+            # 健康检查：防止拿到已被 close() 关闭的连接
+            try:
+                conn.execute("SELECT 1")
+                self._conn = conn
+                logger.info(
+                    "TemporalKnowledgeGraph: 复用共享连接, db=%s, conn_id=%d",
+                    self._db_path.name, id(conn),
+                )
+                return
+            except sqlite3.ProgrammingError:
+                logger.warning(
+                    "TemporalKnowledgeGraph: 共享连接已关闭, 重建连接, db=%s", self._db_path.name
+                )
+                del _shared_connections[db_path_str]
+        self._conn = sqlite3.connect(db_path_str, check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=NORMAL")
-        self._conn.execute("PRAGMA busy_timeout=5000")
+        self._conn.execute("PRAGMA busy_timeout=10000")  # 提升到 10s
+        _shared_connections[db_path_str] = self._conn
+        logger.info(
+            "TemporalKnowledgeGraph: 新建连接, db=%s, conn_id=%d, busy_timeout=10000ms, batch_threshold=%d",
+            self._db_path.name, id(self._conn), self._BATCH_THRESHOLD,
+        )
 
         migrator = SchemaMigrator(self._conn)
         migrator.migrate(
@@ -164,6 +203,7 @@ class TemporalKnowledgeGraph:
             新三元组的 ID
         """
         with self._lock:
+            self._ensure_conn_alive()
             assert self._conn is not None
             triple_id = _generate_id()
             now = datetime.now(timezone.utc).isoformat()
@@ -228,6 +268,7 @@ class TemporalKnowledgeGraph:
         superseded_by: str | None = None,
     ) -> None:
         """标记三元组过时（内部已持有锁时调用）。"""
+        self._ensure_conn_alive()
         assert self._conn is not None
         try:
             self._conn.execute(
@@ -238,6 +279,32 @@ class TemporalKnowledgeGraph:
             self._maybe_commit()
         except Exception as e:
             logger.warning("invalidate_triple 失败: %s", e)
+
+    def delete_by_memory_id(self, memory_id: str) -> int:
+        """删除指定记忆来源的所有时序三元组。
+
+        Args:
+            memory_id: 来源记忆 ID
+
+        Returns:
+            删除的三元组数量
+        """
+        if not memory_id:
+            return 0
+        with self._lock:
+            self._ensure_conn_alive()
+            assert self._conn is not None
+            try:
+                cursor = self._conn.execute(
+                    "DELETE FROM temporal_triples WHERE source_memory_id = ?",
+                    (memory_id,),
+                )
+                self._pending_writes += 1
+                self._maybe_commit()
+                return cursor.rowcount
+            except Exception as e:
+                logger.warning("TemporalKnowledgeGraph delete_by_memory_id failed: %s", e)
+                return 0
 
     # ─── 时序查询 ───────────────────────────────────────────────
 
@@ -253,6 +320,7 @@ class TemporalKnowledgeGraph:
         Returns:
             当前有效的 TemporalTriple 列表
         """
+        self._ensure_conn_alive()
         assert self._conn is not None
         try:
             conditions = ["invalid_at IS NULL"]
@@ -289,6 +357,7 @@ class TemporalKnowledgeGraph:
         Returns:
             在 at_time 有效的 TemporalTriple 列表
         """
+        self._ensure_conn_alive()
         assert self._conn is not None
         try:
             conditions = [
@@ -337,6 +406,7 @@ class TemporalKnowledgeGraph:
         self, subject: str, predicate: str, obj: str
     ) -> TemporalTriple | None:
         """矛盾检测（内部已持有锁时调用）。"""
+        self._ensure_conn_alive()
         assert self._conn is not None
         try:
             rows = self._conn.execute(
@@ -367,6 +437,7 @@ class TemporalKnowledgeGraph:
         Returns:
             按 valid_at 升序的 TemporalTriple 列表
         """
+        self._ensure_conn_alive()
         assert self._conn is not None
         try:
             rows = self._conn.execute(
@@ -517,6 +588,7 @@ class TemporalKnowledgeGraph:
             "current_triples": 0,
             "superseded_triples": 0,
         }
+        self._ensure_conn_alive()
         if not self._conn:
             return stats
         try:
@@ -541,29 +613,74 @@ class TemporalKnowledgeGraph:
     # ─── 生命周期 ───────────────────────────────────────────────
 
     def close(self) -> None:
-        """关闭数据库连接。"""
-        self.flush()
-        if self._conn:
-            self._conn.close()
-            self._conn = None
+        """关闭数据库连接。
+
+        使用引用计数：只有最后一个实例 close 时才真正关闭 SQLite 连接，
+        避免其他实例持有 dead connection 导致 "database is locked" 错误。
+        """
+        db_path_str = str(self._db_path)
+        with self._lock:
+            self.flush()
+            # 减引用计数
+            refcount = _connection_refcounts.get(db_path_str, 1) - 1
+            _connection_refcounts[db_path_str] = max(0, refcount)
+            # 只有最后一个实例才真正关闭连接
+            if refcount <= 0:
+                logger.info(
+                    "TemporalKnowledgeGraph: 最后一个实例关闭, 真正关闭连接, db=%s, conn_id=%d",
+                    self._db_path.name, id(self._conn) if self._conn else 0,
+                )
+                if self._conn:
+                    self._conn.close()
+                    self._conn = None
+                # 清理共享连接缓存
+                _shared_connections.pop(db_path_str, None)
+            else:
+                logger.info(
+                    "TemporalKnowledgeGraph: 非最后实例关闭, 保留连接, db=%s, 剩余引用=%d, conn_id=%d",
+                    self._db_path.name, refcount, id(self._conn) if self._conn else 0,
+                )
+                # 非最后一个实例，仅清除自身引用，不关闭实际连接
+                self._conn = None
 
     def flush(self) -> None:
         """显式提交所有待写入。"""
-        if self._conn and self._pending_writes > 0:
-            try:
-                self._conn.commit()
-                self._pending_writes = 0
-            except Exception as e:
-                logger.warning("flush 失败: %s", e)
+        with self._lock:
+            self._ensure_conn_alive()
+            if self._conn and self._pending_writes > 0:
+                try:
+                    self._conn.commit()
+                    self._pending_writes = 0
+                except Exception as e:
+                    logger.warning("flush 失败: %s", e)
 
     # ─── 内部方法 ───────────────────────────────────────────────
 
     def _maybe_commit(self) -> None:
         """到达阈值时提交。"""
         if self._pending_writes >= self._BATCH_THRESHOLD:
+            self._ensure_conn_alive()
             assert self._conn is not None
             self._conn.commit()
             self._pending_writes = 0
+
+    def _ensure_conn_alive(self) -> None:
+        """确保连接可用，若被其他实例关闭则重新创建。"""
+        if self._conn is None:
+            logger.debug("TemporalKnowledgeGraph: 连接为 None, 重新初始化, db=%s", self._db_path.name)
+            self._init_db()
+            return
+        try:
+            self._conn.execute("SELECT 1")
+        except (sqlite3.ProgrammingError, sqlite3.OperationalError):
+            logger.warning(
+                "TemporalKnowledgeGraph: 连接丢失, 重新初始化, db=%s, 旧conn_id=%d",
+                self._db_path.name, id(self._conn),
+            )
+            db_path_str = str(self._db_path)
+            _shared_connections.pop(db_path_str, None)
+            self._conn = None
+            self._init_db()
 
     def _rows_to_triples(self, rows: list[Any]) -> list[TemporalTriple]:
         """将行转为 TemporalTriple 列表。"""

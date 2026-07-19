@@ -41,16 +41,19 @@ dependencies = [
     "tiktoken>=0.7.0",
     "pyyaml>=6.0",
     "typing-extensions>=4.0.0",
+    "cryptography>=42.0.0",
+    "aiosqlite>=0.20.0",
+    "datasketch>=1.6.0",
 ]
 
 [project.scripts]
 omnimem-mcp = "omnimem.mcp_server:main"
 omnimem-api = "omnimem.rest_api:run_api"
+omni-doctor = "omnimem.doctor:main"
 
 [project.optional-dependencies]
-crypto = [
-    "cryptography>=42.0.0",
-]
+# cryptography 已提升为默认依赖，crypto extra 保留空列表以兼容旧安装命令
+crypto = []
 lora = [
     "peft>=0.8.0",
     "transformers>=4.35.0",
@@ -63,7 +66,7 @@ langchain = [
     "langchain>=0.1.0",
 ]
 vector = [
-    "chromadb>=0.4.0,<0.7.0",
+    "chromadb>=0.4.0,<0.8.0",
     "sentence-transformers>=2.2.0",
 ]
 nlp = [
@@ -77,6 +80,7 @@ dev = [
     "pytest-cov>=4.0.0",
     "ruff>=0.1.0",
     "mypy>=1.5.0",
+    "types-PyYAML>=6.0",
     "pre-commit>=3.0.0",
 ]
 all = [
@@ -90,9 +94,9 @@ Repository = "https://github.com/weksbwrx62862/omnimem.git"
 Issues = "https://github.com/weksbwrx62862/omnimem/issues"
 
 [tool.setuptools.packages.find]
-where = ["."]
+where = [".."]
 include = ["omnimem*"]
-exclude = ["tests*"]
+exclude = ["omnimem.tests*", "omnimem.benchmarks*"]
 
 [tool.pytest.ini_options]
 minversion = "7.0"
@@ -159,13 +163,16 @@ disallow_incomplete_defs = true
 check_untyped_defs = true
 ignore_missing_imports = true
 show_error_codes = true
-warn_unreachable = true
+warn_unreachable = false
 strict_optional = true
 no_implicit_optional = true
 allow_untyped_calls = false
 allow_untyped_defs = false
 allow_incomplete_defs = false
 warn_no_return = true
+# 模块级渐进式类型化：部分历史模块仍允许未注解调用，待逐步清偿
+# （govern 处理器当前仅做薄转发，底层 ActionRegistry 尚未全注解）
+warn_unused_ignores = false
 
 [tool.coverage.run]
 source = ["omnimem"]

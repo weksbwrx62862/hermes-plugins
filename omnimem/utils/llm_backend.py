@@ -95,7 +95,7 @@ class OllamaBackend(LLMBackend):
 
 
 class AnthropicBackend(LLMBackend):
-    def __init__(self, api_key: str | None = None, model: str = "claude-3-haiku-20240307"):
+    def __init__(self, api_key: str | None = None, model: str = "gpt-4o-mini"):
         self._api_key = api_key
         self._model = model
 

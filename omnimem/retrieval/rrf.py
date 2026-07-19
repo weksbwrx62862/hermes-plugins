@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +31,8 @@ class RRFFusion:
         self,
         result_lists: list[list[dict[str, Any]]],
         id_key: str = "memory_id",
-        weights: Optional[list[float]] = None,
-        min_rrf: Optional[float] = None,
+        weights: list[float] | None = None,
+        min_rrf: float | None = None,
     ) -> list[dict[str, Any]]:
         """融合多路检索结果。
 

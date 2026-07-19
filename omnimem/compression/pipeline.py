@@ -24,7 +24,7 @@ class CompressionPipeline:
         session_key: str = "",
     ) -> None:
         """初始化压缩管线。
-        
+
         Args:
             llm_call_fn: LLM 调用函数
             config: 配置对象
@@ -38,12 +38,12 @@ class CompressionPipeline:
 
     def compress(self, content: str, memory_type: str = "", priority: int = 2) -> str:
         """压缩内容。
-        
+
         Args:
             content: 待压缩内容
             memory_type: 记忆类型
             priority: 优先级
-            
+
         Returns:
             压缩后的内容
         """
@@ -63,11 +63,11 @@ class CompressionPipeline:
         lines = head_tail_collapse(lines)
         lines = structured_line_compress(lines)
         result = "\n".join(lines)
-        
+
         if self._llm_call_fn:
             summary = llm_summarize(result, self._llm_call_fn)
             result = summary.to_text()
-        
+
         items = [{"content": result, "type": memory_type or "fact", "confidence": 3}]
         items = priority_compress(items)
         return items[0]["content"] if items else result

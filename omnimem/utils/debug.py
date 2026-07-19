@@ -1,7 +1,7 @@
 """OmniMem 调试模式工具。"""
 from __future__ import annotations
+
 import os
-import logging
 
 
 def is_debug_mode() -> bool:

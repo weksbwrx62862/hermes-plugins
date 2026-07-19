@@ -1,12 +1,26 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
+import threading
 import time
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
-from omnimem.context.manager import ContextManager
+# 以下函数已迁移到独立模块，此处 re-export 以保持向后兼容
+from omnimem.core.llm_initializer import _REFLECT_CACHE_TTL
+from omnimem.core.tool_names import (
+    MEMORY_COMPAT,
+    OMNI_COMPACT,
+    OMNI_DETAIL,
+    OMNI_GOVERN,
+    OMNI_MEMORIZE,
+    OMNI_RECALL,
+    OMNI_RECORD_ACTION,
+    OMNI_REFLECT,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -24,16 +38,16 @@ class ToolRouter:
         record_action_fn: Callable[[dict[str, Any]], str] | None = None,
     ) -> None:
         self._routes: dict[str, Callable[[dict[str, Any]], str]] = {
-            "omni_memorize": memorize_fn,
-            "omni_recall": recall_fn,
-            "omni_govern": govern_fn,
-            "omni_reflect": reflect_fn,
-            "omni_compact": compact_fn,
-            "omni_detail": detail_fn,
-            "memory": memory_compat_fn,
+            OMNI_MEMORIZE: memorize_fn,
+            OMNI_RECALL: recall_fn,
+            OMNI_GOVERN: govern_fn,
+            OMNI_REFLECT: reflect_fn,
+            OMNI_COMPACT: compact_fn,
+            OMNI_DETAIL: detail_fn,
+            MEMORY_COMPAT: memory_compat_fn,
         }
         if record_action_fn is not None:
-            self._routes["omni_record_action"] = record_action_fn
+            self._routes[OMNI_RECORD_ACTION] = record_action_fn
 
     def route(self, tool_name: str, args: dict[str, Any]) -> str:
         handler = self._routes.get(tool_name)
@@ -69,6 +83,21 @@ def handle_reflect(
 
     if consolidation and consolidation.pending_count > 0:
         consolidation.process_pending()
+
+    if reflect_engine is None:
+        # Lazy-init: SDK 模式下未传入 reflect_engine
+        try:
+            from pathlib import Path
+
+            from omnimem.config import OmniMemConfig
+            from omnimem.deep.consolidation import ConsolidationEngine
+            from omnimem.deep.reflect import ReflectEngine
+            data_dir = Path.home() / ".hermes" / "omnimem"
+            cfg = OmniMemConfig(data_dir)
+            cons = ConsolidationEngine(data_dir / "deep", cfg)
+            reflect_engine = ReflectEngine(data_dir / "deep", consolidation_engine=cons)
+        except Exception as e:
+            return json.dumps({"status": "error", "message": f"ReflectEngine init failed: {e}"}, ensure_ascii=False)
 
     result = reflect_engine.reflect(
         query=query,
@@ -221,104 +250,6 @@ def handle_detail(
     return json.dumps({"error": f"Unknown action: {action}"})
 
 
-def build_system_prompt(
-    data_dir: str,
-    store: Any,
-    core_block: Any,
-    context_manager: Any,
-    config: Any,
-    turn_count: int,
-    system_prompt_cache_turn: int,
-    system_prompt_cache_value: str,
-    last_query: str,
-) -> tuple[str, int, str]:
-    if system_prompt_cache_turn == turn_count:
-        return system_prompt_cache_value, system_prompt_cache_turn, system_prompt_cache_value
-
-    parts = [
-        "## OmniMem Memory System (Unified)",
-        f"Memory directory: {data_dir}",
-        "",
-    ]
-
-    boot_entries = []
-    fact_entries = []
-    for mtype in ("preference", "correction"):
-        entries = store.search(memory_type=mtype, limit=10)
-        for e in entries:
-            e["_mtype"] = mtype
-            boot_entries.append(e)
-    for e in store.search(memory_type="fact", limit=15):
-        e["_mtype"] = "fact"
-        fact_entries.append(e)
-
-    if not boot_entries and not fact_entries:
-        parts.append("### Identity")
-        parts.append(core_block.identity_block)
-        result = "\n".join(parts)
-        return result, turn_count, result
-
-    refined_lines = []
-    total_chars = 0
-    base_budget = config.get("system_prompt_char_limit", 500)
-    query_kw_count = (
-        len(re.findall(r"[\u4e00-\u9fff]{2,}|[a-zA-Z]{3,}", last_query.lower()))
-        if last_query
-        else 0
-    )
-    char_budget = base_budget + min(query_kw_count * 40, 300)
-    max_summary = context_manager.max_summary_chars
-    seen_fps = set(context_manager.get_injected_fingerprints())
-
-    def _refine_and_add(entries: list[dict[str, Any]], budget_remaining: int) -> tuple[list[str], int]:
-        lines = []
-        used = 0
-        for entry in entries:
-            raw = entry.get("content", "")
-            if not raw:
-                continue
-            summary = ContextManager.refine_content(raw, max_summary)
-            if len(summary) < 3:
-                continue
-            fp = ContextManager._content_fingerprint(summary)
-            if fp:
-                is_dup = any(
-                    ContextManager._fingerprint_similarity(fp, existing) > 0.7
-                    for existing in seen_fps
-                )
-                if is_dup:
-                    continue
-                seen_fps.add(fp)
-                context_manager.add_persistent_fingerprint(fp)
-            line = f"- [{entry.get('_mtype', 'fact')}] {summary}"
-            if used + len(line) + 1 > budget_remaining:
-                break
-            lines.append(line)
-            used += len(line) + 1
-        return lines, used
-
-    boot_lines, boot_used = _refine_and_add(boot_entries, char_budget)
-    refined_lines.extend(boot_lines)
-    total_chars += boot_used
-
-    remaining = char_budget - total_chars
-    if remaining > 50 and fact_entries:
-        fact_lines, fact_used = _refine_and_add(fact_entries, remaining)
-        refined_lines.extend(fact_lines)
-        total_chars += fact_used
-
-    if refined_lines:
-        parts.append("### Core Memories (summaries — use omni_detail for full content)")
-        parts.extend(refined_lines)
-        parts.append("")
-
-    parts.append("### Identity")
-    parts.append(core_block.identity_block)
-
-    result = "\n".join(parts)
-    return result, turn_count, result
-
-
 def run_prefetch(
     query: str,
     session_id: str,
@@ -398,9 +329,66 @@ def run_prefetch(
     all_results = kv_results + async_results + live_results
 
     if not all_results:
+        # ★ 智能预取：即使无结果，也预测下一轮查询并预热缓存
+        _trigger_smart_prefetch(query, config, retriever)
         return "", prefetch_cache
 
+    # ★ 智能预取：基于 PerceptionEngine 预测下一轮查询，异步回填 MultiLevelCache
+    _trigger_smart_prefetch(query, config, retriever)
+
     return str(context_manager.refine_prefetch_results(all_results)), prefetch_cache
+
+
+def _trigger_smart_prefetch(query: str, config: Any, retriever: Any) -> None:
+    """基于 PerceptionEngine 预测下一轮查询，异步预取并回填 MultiLevelCache。
+
+    使用 daemon 线程在后台执行，不阻塞主流程。
+    预取结果通过 retriever.search() 自动写入 MultiLevelCache（search 内部调用 _set_cache）。
+    """
+    try:
+        from omnimem.perception.engine import PerceptionEngine
+
+        # 仅当配置启用智能预取时执行（默认启用）
+        if not config.get("enable_smart_prefetch", True):
+            return
+
+        engine = PerceptionEngine()
+        predicted = engine.predict_intent(query)
+        # 预测查询为空、过短或与当前查询相同则跳过
+        if not predicted or len(predicted) < 3 or predicted == query:
+            return
+
+        # 后台 daemon 线程执行预取（不阻塞主流程）
+        thread = threading.Thread(
+            target=_smart_prefetch_background,
+            args=(predicted, config, retriever),
+            daemon=True,
+        )
+        thread.start()
+        logger.debug("Smart prefetch triggered for predicted query: %s", predicted[:50])
+    except Exception as e:
+        # 智能预取失败不影响主流程
+        logger.debug("Smart prefetch trigger failed: %s", e)
+
+
+def _smart_prefetch_background(predicted_query: str, config: Any, retriever: Any) -> None:
+    """后台执行智能预取，结果回填 MultiLevelCache。
+
+    retriever.search() 内部会调用 _set_cache 将结果写入 MultiLevelCache，
+    因此此处只需调用 search 即可自动预热缓存。
+    """
+    try:
+        max_tokens = config.get("max_prefetch_tokens", 300)
+        # 调用 retriever.search 自动缓存结果到 MultiLevelCache
+        results = retriever.search(predicted_query, max_tokens=max_tokens)
+        if results:
+            logger.debug(
+                "Smart prefetch completed: %d results for predicted query: %s",
+                len(results),
+                predicted_query[:50],
+            )
+    except Exception as e:
+        logger.debug("Smart prefetch background failed: %s", e)
 
 
 def run_queue_prefetch(
@@ -455,80 +443,8 @@ def l3_recall(query: str, retriever: Any, store: Any, limit: int = 20) -> list[d
     return results[:limit]
 
 
-_REFLECT_CACHE_TTL = 60.0
-
-
-def init_llm_client(config: Any) -> Any:
-    from omnimem.utils.llm_client import AsyncLLMClient
-
-    creds = AsyncLLMClient.load_credentials_from_env()
-    if not creds.get("api_key") or not creds.get("base_url"):
-        creds.update(AsyncLLMClient.load_credentials_from_hermes_env())
-    config_creds = AsyncLLMClient.load_credentials_from_hermes_config()
-    if not creds.get("base_url"):
-        creds["base_url"] = config_creds.get("base_url", "")
-    if not creds.get("api_key"):
-        creds["api_key"] = config_creds.get("api_key", "")
-    # ★ R25修复ARCH-1 + P0-fix：model 选择策略
-    # 必须匹配实际 base_url 对应的 provider 的 models 列表，
-    # 否则会把 mimo-v2.5-pro 发给 deepseek API（400错误）
-    actual_base_url = creds.get("base_url", "")
-    default_model = config_creds.get("model") or config.get("default", "glm-5.1")
-
-    # 从 config providers 中找到与实际 base_url 匹配的 provider，取其 models
-    matched_models: list[str] = []
-    try:
-        from pathlib import Path
-        import yaml
-        cfg_file = Path.home() / ".hermes" / "config.yaml"
-        if cfg_file.exists():
-            cfg = yaml.safe_load(cfg_file.read_text(encoding="utf-8"))
-            for _pname, pval in (cfg.get("providers") or {}).items():
-                if isinstance(pval, dict) and pval.get("base_url") == actual_base_url:
-                    matched_models = pval.get("models", [])
-                    if matched_models:
-                        logger.warning("Matched provider '%s' for base_url %s, models: %s",
-                                     _pname, actual_base_url, matched_models)
-                        break
-    except Exception as e:
-        logger.warning("ToolRouter init_llm_client provider match failed: %s", e)
-
-    # 优先用匹配到的 provider models，其次用 config_creds 的 models，最后用 default
-    if matched_models:
-        model = matched_models[0]
-    elif config_creds.get("models"):
-        # config_creds.models 来自第一个 provider，可能与 base_url 不匹配
-        # 只在 base_url 也来自 config（未被 env 覆盖）时使用
-        config_base_url = config_creds.get("base_url", "")
-        if config_base_url and config_base_url == actual_base_url:
-            model = config_creds["models"][0]
-        else:
-            model = default_model
-    else:
-        model = default_model
-    logger.warning("Selected model=%s (actual_base_url=%s, default=%s)", model, actual_base_url, default_model)
-
-    # ★ R25修复ARCH-1：凭证有效性检测
-    has_api_key = bool(creds.get("api_key", "").strip())
-    has_base_url = bool(creds.get("base_url", "").strip())
-    if not has_api_key or not has_base_url:
-        logger.warning(
-            "AsyncLLMClient: LLM 凭证不完整 (api_key=%s, base_url=%s), "
-            "Reflect/Recall 的 LLM 功能将不可用，回退到规则归纳",
-            "有" if has_api_key else "缺失",
-            "有" if has_base_url else "缺失",
-        )
-
-    llm_client = AsyncLLMClient(
-        api_key=creds.get("api_key", ""),
-        base_url=creds.get("base_url", ""),
-        model=model,
-        max_concurrent=3,
-        timeout=30.0,
-        cache_ttl=_REFLECT_CACHE_TTL,
-    )
-    logger.warning("AsyncLLMClient initialized: model=%s, has_creds=%s", model, has_api_key and has_base_url)
-    return llm_client
+# ★ 修复1: reflect_cache 并发访问锁（模块级别，保护多线程读写）
+_reflect_cache_lock = threading.Lock()
 
 
 def make_llm_call_fn(llm_client: Any) -> Callable[[str], str] | None:
@@ -557,23 +473,30 @@ def call_llm_for_reflect(
     max_reflect_cache = 64
     cache_key = prompt[:200]
     now = time.time()
-    if len(reflect_cache) > max_reflect_cache:
-        reflect_cache.clear()
-        reflect_cache.update(
-            {
-                k: (v, t)
-                for k, (v, t) in reflect_cache.items()
-                if now - t < _REFLECT_CACHE_TTL
-            }
-        )
-    if cache_key in reflect_cache:
-        cached_result, cached_time = reflect_cache[cache_key]
-        if now - cached_time < _REFLECT_CACHE_TTL:
-            logger.warning("ReflectEngine LLM cache hit")
-            return str(cached_result)
+    # ★ 修复1: 缓存清理加锁，不在 LLM 调用期间持锁
+    with _reflect_cache_lock:
+        if len(reflect_cache) > max_reflect_cache:
+            expired_keys = [k for k, (_, t) in reflect_cache.items() if now - t >= _REFLECT_CACHE_TTL]
+            for k in expired_keys:
+                del reflect_cache[k]
+            if len(reflect_cache) > max_reflect_cache:
+                sorted_keys = sorted(reflect_cache.keys(), key=lambda k: reflect_cache[k][1])
+                for k in sorted_keys[:len(sorted_keys) // 2]:
+                    del reflect_cache[k]
+    # ★ 修复1: 缓存读取加锁
+    with _reflect_cache_lock:
+        cache_hit = None
+        if cache_key in reflect_cache:
+            cached_result, cached_time = reflect_cache[cache_key]
+            if now - cached_time < _REFLECT_CACHE_TTL:
+                cache_hit = str(cached_result)
+    if cache_hit is not None:
+        logger.warning("ReflectEngine LLM cache hit")
+        return cache_hit
 
     if llm_client:
         try:
+            # ★ 修复1: LLM 调用不在锁内，避免持锁阻塞
             result = llm_client.call_sync(
                 prompt=prompt,
                 system=system,
@@ -581,12 +504,85 @@ def call_llm_for_reflect(
                 temperature=0.5,
             )
             if result.content:
-                reflect_cache[cache_key] = (result.content, now)
+                # ★ 修复1: 缓存写入加锁
+                with _reflect_cache_lock:
+                    reflect_cache[cache_key] = (result.content, now)
                 return result.content
         except Exception as e:
             logger.warning("ReflectEngine AsyncLLM failed: %s", e)
 
     logger.warning("ReflectEngine: LLM client not available, returning None")
+    return None
+
+
+async def async_call_llm_for_reflect(
+    prompt: str,
+    system: str,
+    llm_client: Any,
+    reflect_cache: dict[str, tuple[str, float]],
+    max_tokens: int = 800,
+) -> str | None:
+    """异步版本的 call_llm_for_reflect — 使用 asyncio.to_thread 包装 LLM 调用。
+
+    保持与同步版本相同的缓存逻辑（模块级锁 + LRU）：
+      1. 缓存清理/读取/写入仍使用 threading.Lock（操作极短，不会阻塞事件循环）
+      2. LLM 调用使用 asyncio.to_thread 包装，不持锁，避免阻塞事件循环
+
+    Args:
+        prompt: 反思 prompt
+        system: 系统提示
+        llm_client: LLM 客户端实例（需提供 call_sync 方法）
+        reflect_cache: 反思缓存字典（与同步版本共享）
+        max_tokens: 最大输出 token
+
+    Returns:
+        LLM 响应文本，失败时返回 None
+    """
+    max_reflect_cache = 64
+    cache_key = prompt[:200]
+    now = time.time()
+
+    # ★ 缓存清理加锁（与同步版本一致，操作极短）
+    with _reflect_cache_lock:
+        if len(reflect_cache) > max_reflect_cache:
+            expired_keys = [k for k, (_, t) in reflect_cache.items() if now - t >= _REFLECT_CACHE_TTL]
+            for k in expired_keys:
+                del reflect_cache[k]
+            if len(reflect_cache) > max_reflect_cache:
+                sorted_keys = sorted(reflect_cache.keys(), key=lambda k: reflect_cache[k][1])
+                for k in sorted_keys[:len(sorted_keys) // 2]:
+                    del reflect_cache[k]
+
+    # ★ 缓存读取加锁
+    with _reflect_cache_lock:
+        cache_hit = None
+        if cache_key in reflect_cache:
+            cached_result, cached_time = reflect_cache[cache_key]
+            if now - cached_time < _REFLECT_CACHE_TTL:
+                cache_hit = str(cached_result)
+    if cache_hit is not None:
+        logger.warning("ReflectEngine LLM async cache hit")
+        return cache_hit
+
+    if llm_client:
+        try:
+            # ★ LLM 调用使用 asyncio.to_thread 包装，不持锁，避免阻塞事件循环
+            result = await asyncio.to_thread(
+                llm_client.call_sync,
+                prompt=prompt,
+                system=system,
+                max_tokens=max_tokens,
+                temperature=0.5,
+            )
+            if result and result.content:
+                # ★ 缓存写入加锁
+                with _reflect_cache_lock:
+                    reflect_cache[cache_key] = (result.content, now)
+                return result.content
+        except Exception as e:
+            logger.warning("ReflectEngine async LLM failed: %s", e)
+
+    logger.warning("ReflectEngine: LLM client not available (async), returning None")
     return None
 
 
@@ -704,87 +700,17 @@ def apply_sync_change(change: dict[str, Any], store: Any, index: Any, retriever:
         return False
 
 
-_CONFIG_SCHEMA: list[dict[str, Any]] = [
-    {
-        "key": "save_interval",
-        "description": "Auto-save every N turns (default: 15)",
-        "default": 15,
-    },
-    {
-        "key": "retrieval_mode",
-        "description": "Default retrieval mode (rag/llm)",
-        "default": "rag",
-        "choices": ["rag", "llm"],
-    },
-    {
-        "key": "vector_backend",
-        "description": "Vector storage backend",
-        "default": "chromadb",
-        "choices": ["chromadb", "qdrant", "pgvector"],
-    },
-    {
-        "key": "fact_threshold",
-        "description": "Consolidation trigger threshold (default: 10)",
-        "default": 10,
-    },
-    {
-        "key": "enable_reranker",
-        "description": "Enable Cross-Encoder reranking (needs sentence-transformers)",
-        "default": False,
-    },
-    {
-        "key": "enable_compression",
-        "description": "Enable 5-layer compression pipeline in on_pre_compress (default: False)",
-        "default": False,
-    },
-    {
-        "key": "conflict_strategy",
-        "description": "Conflict resolution strategy",
-        "default": "latest",
-        "choices": ["latest", "confidence", "manual"],
-    },
-    {
-        "key": "budget_tokens",
-        "description": "Token budget for working memory (default: 4000)",
-        "default": 4000,
-    },
-    {
-        "key": "kv_cache_threshold",
-        "description": "KV Cache auto-preload threshold (access count, default: 10)",
-        "default": 10,
-    },
-    {
-        "key": "kv_cache_max",
-        "description": "KV Cache max entries (default: 100)",
-        "default": 100,
-    },
-    {
-        "key": "lora_base_model",
-        "description": "LoRA base model name (default: Qwen2.5-7B)",
-        "default": "Qwen2.5-7B",
-    },
-    {
-        "key": "sync_mode",
-        "description": "Multi-instance sync mode (none/file_lock/changelog)",
-        "default": "none",
-        "choices": ["none", "file_lock", "changelog"],
-    },
-    {
-        "key": "sync_interval",
-        "description": "Sync interval in seconds for changelog mode (default: 30)",
-        "default": 30,
-    },
-    {
-        "key": "sync_conflict_resolution",
-        "description": "How to resolve sync conflicts",
-        "default": "latest_wins",
-        "choices": ["latest_wins", "manual"],
-    },
-]
-
-
 def get_config_schema() -> list[dict[str, Any]]:
-    return list(_CONFIG_SCHEMA)
+    """从 config._config 动态生成 UI 友好的配置 schema。"""
+    from omnimem.config._config import _CONFIG_SCHEMA
+
+    result = []
+    for key, spec in _CONFIG_SCHEMA.items():
+        entry = {"key": key, "description": spec.get("description", ""), "default": spec.get("default")}
+        if "choices" in spec:
+            entry["choices"] = spec["choices"]
+        result.append(entry)
+    return result
 
 
 def save_config(values: dict[str, Any], hermes_home: str) -> None:

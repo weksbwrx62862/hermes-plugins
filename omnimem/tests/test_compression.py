@@ -1,7 +1,6 @@
-import pytest
 
-from omnimem.compression.micro import microcompact
 from omnimem.compression.line_compress import structured_line_compress
+from omnimem.compression.micro import microcompact
 from omnimem.compression.pipeline import CompressionPipeline
 
 
@@ -22,7 +21,7 @@ class TestMicrocompact:
     def test_preserves_key_markers(self):
         lines = ["DECISION: use Python", "normal line"]
         result = microcompact(lines)
-        assert any("DECISION" in l for l in result)
+        assert any("DECISION" in line for line in result)
 
     def test_preserves_empty_line_structure(self):
         lines = ["line1", "", "", "line2"]
@@ -53,8 +52,8 @@ class TestStructuredLineCompress:
     def test_empty_lines_preserved(self):
         lines = ["line1", "", "line2"]
         result = structured_line_compress(lines)
-        assert any("line1" in l for l in result)
-        assert any("line2" in l for l in result)
+        assert any("line1" in line for line in result)
+        assert any("line2" in line for line in result)
 
     def test_empty_input(self):
         result = structured_line_compress([])

@@ -1,6 +1,7 @@
 name: omnimem
 version: 1.0.0
 description: "OmniMem — 五层混合记忆系统：感知→工作→结构化→深层→内化，含治理引擎(冲突/衰减/遗忘/隐私/溯源)"
+kind: backend
 pip_dependencies:
   # 核心依赖（建议锁定主版本，避免 API Breaking Change）
   - "chromadb>=0.4.0,<0.7.0"

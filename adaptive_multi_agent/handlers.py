@@ -5,9 +5,10 @@ from typing import Any, Dict, Optional
 
 from tools.registry import tool_error, tool_result
 
-from .engine import AdaptiveMultiAgentEngine, AgentMode, RequirementClarifier
+from .engine import AdaptiveMultiAgentEngine
+from .assessor import RequirementClarifier
+from .subagent import AgentMode, _MODE_CN, TASK_TYPE_CN
 from .persistence import get_stats
-from .subagent import _MODE_CN, TASK_TYPE_CN
 
 _engine: Optional[AdaptiveMultiAgentEngine] = None
 _clarifier: Optional[RequirementClarifier] = None
@@ -304,3 +305,178 @@ def _reset_engine() -> None:
 def _reset_clarifier() -> None:
     global _clarifier
     _clarifier = None
+
+
+# ── 轨迹记录与评估工具 ──
+
+def handle_ama_trajectories(args: Dict, **kwargs) -> str:
+    """查询执行轨迹记录"""
+    from .trajectory import get_recorder
+
+    limit = args.get("limit", 20)
+    success_only = args.get("success_only")
+    mode = args.get("mode")
+
+    recorder = get_recorder()
+    trajectories = recorder.query(limit=limit, success_only=success_only, mode=mode)
+
+    stats = recorder.get_stats()
+
+    return tool_result({
+        "trajectories": trajectories,
+        "stats": stats,
+        "total": len(trajectories),
+    })
+
+
+def handle_ama_grade(args: Dict, **kwargs) -> str:
+    """对指定轨迹进行 LLM 评分"""
+    from .trajectory import get_recorder
+    from .grader import get_grader
+
+    trajectory_id = args.get("trajectory_id", "")
+    if not trajectory_id:
+        return tool_error("trajectory_id 参数不能为空")
+
+    recorder = get_recorder()
+    trajectory = recorder.get_trajectory(trajectory_id)
+    if not trajectory:
+        return tool_error(f"轨迹 {trajectory_id} 不存在")
+
+    grader = get_grader()
+    grade_result = grader.grade(
+        task=trajectory["task"],
+        trajectory=trajectory,
+        ctx=None,  # ctx=None 强制走规则评分，避免调用不存在的 generate_text
+    )
+
+    # 更新评分到数据库
+    recorder.update_grade(
+        trajectory_id,
+        grade_result.get("overall_score", 0),
+        grade_result.get("feedback", ""),
+    )
+
+    return tool_result({
+        "trajectory_id": trajectory_id,
+        "grade": grade_result,
+    })
+
+
+def handle_ama_skills(args: Dict, **kwargs) -> str:
+    """查询子代理技能注册表统计。"""
+    domain = args.get("domain")
+
+    from .skill_registry import get_skill_registry
+    registry = get_skill_registry(force_reload=True)
+    stats = registry.get_stats(domain)
+    summary = registry.skill_summary()
+
+    result = {
+        "total_records": summary["total_records"],
+        "total_domains": summary["total_domains"],
+        "domains": summary["domains"],
+    }
+
+    if domain:
+        domain_label = registry.extract_tags(domain, max_tags=3)
+        if domain_label:
+            result["matched_tags"] = [
+                {"domain": t.domain, "label": t.label, "confidence": t.confidence}
+                for t in domain_label
+            ]
+
+    # 如果有推荐配置，也一并返回
+    if domain:
+        rec = registry.recommend_config(domain, "analysis")
+        if rec:
+            result["recommendation"] = rec
+
+    return tool_result(result)
+
+
+def handle_ama_workflow(args: Dict, **kwargs) -> str:
+    """列出或检查工作流模板。"""
+    action = args.get("action", "list")
+    workflow_id = args.get("workflow_id")
+
+    from .workflows import WORKFLOW_LIBRARY, list_workflows
+
+    if action == "list":
+        return tool_result({
+            "workflows": list_workflows(),
+            "total": len(WORKFLOW_LIBRARY),
+        })
+
+    if action == "info":
+        if not workflow_id:
+            return tool_error("workflow_id 参数不能为空")
+        wf = WORKFLOW_LIBRARY.get(workflow_id)
+        if not wf:
+            return tool_error(f"工作流 '{workflow_id}' 不存在")
+
+        return tool_result({
+            "id": wf.id,
+            "name": wf.name,
+            "task_types": wf.task_types,
+            "description": wf.description,
+            "default_mode": wf.default_mode.value,
+            "max_iterations": wf.max_iterations,
+            "stages": [
+                {
+                    "id": s.id,
+                    "name": s.name,
+                    "role": s.role_id,
+                    "description": s.description,
+                    "success_criteria": s.success_criteria,
+                    "next_stage": s.next_stage,
+                    "fallback_stage": s.fallback_stage,
+                }
+                for s in wf.stages
+            ],
+        })
+
+    return tool_error(f"未知 action: {action}")
+
+
+def handle_ama_resume(args: Dict, **kwargs) -> str:
+    """处理 ama_resume 工具调用：列出/恢复中断的 AMA 任务。"""
+    from .checkpoint import AMACheckpoint
+    action = args.get("action", "list")
+
+    if action == "list":
+        resumeable = AMACheckpoint.list_resumeable()
+        if not resumeable:
+            return tool_result({"message": "无中断任务可恢复", "traces": []})
+        return tool_result({
+            "message": f"找到 {len(resumeable)} 个可恢复任务",
+            "traces": resumeable,
+        })
+
+    elif action == "resume":
+        trace_id = args.get("trace_id", "")
+        if not trace_id:
+            return tool_error("trace_id 不能为空")
+        cp = AMACheckpoint.load_latest(trace_id)
+        if not cp:
+            return tool_error(f"未找到 trace={trace_id} 的检查点")
+
+        # 恢复执行：将 checkpoint 交给 engine，不再把整个 checkpoint 序列化为 context
+        engine = _get_engine()
+        try:
+            resume_context = ""
+            if cp.results_so_far:
+                resume_context = f"【断点恢复】已保存的中间结果：{json.dumps(cp.results_so_far, ensure_ascii=False)}"
+            result = engine.execute(
+                ctx=_plugin_ctx,
+                task=cp.task,
+                context=resume_context,
+                force_mode=cp.mode,
+                session_id=kwargs.get("session_id"),
+                resume_from=trace_id,
+            )
+            return tool_result({"resumed": True, "result": result, "checkpoint_round": cp.round_num})
+        except Exception as e:
+            return tool_error(f"恢复执行失败: {e}")
+
+    return tool_error(f"未知 action: {action}")

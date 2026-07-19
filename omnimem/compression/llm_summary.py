@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -95,6 +96,41 @@ def llm_summarize(messages: str, llm_call_fn: Callable[[str], str] | None = None
         return _extract_without_llm(messages)
 
 
+async def async_llm_summarize(
+    content: str,
+    llm_fn: Callable[[str], str] | Callable[[str], object] | None = None,
+) -> StructuredSummary:
+    """异步 LLM 摘要 — 使用 asyncio.to_thread 包装同步 LLM 调用。
+
+    与同步 llm_summarize 逻辑一致，但 LLM 调用异步执行，避免阻塞事件循环。
+    支持传入同步函数或异步函数（协程函数）。
+
+    Args:
+        content: 消息文本
+        llm_fn: LLM 调用函数，可为同步 (prompt) -> str 或异步 (prompt) -> str。
+                None 时使用无 LLM 的简单提取。
+
+    Returns:
+        结构化摘要（与同步版本返回类型一致）
+    """
+    if llm_fn is None:
+        # 无 LLM 调用函数时，使用简单提取
+        return _extract_without_llm(content)
+
+    try:
+        prompt = _SUMMARY_PROMPT.format(messages=content[:3000])
+        # ★ 判断 llm_fn 是同步还是异步函数
+        if asyncio.iscoroutinefunction(llm_fn):
+            response = await llm_fn(prompt)
+        else:
+            # 同步函数包装为异步，避免阻塞事件循环
+            response = await asyncio.to_thread(llm_fn, prompt)
+        return _parse_llm_response(response)
+    except Exception as e:
+        logger.warning("Async LLM summary failed: %s", e)
+        return _extract_without_llm(content)
+
+
 def _extract_without_llm(messages: str) -> StructuredSummary:
     """无 LLM 时的简单提取。"""
     lines = messages.strip().split("\n")
@@ -147,7 +183,7 @@ def _parse_llm_response(response: str) -> StructuredSummary:
                     next_steps=data.get("next_steps", ""),
                 )
             except json.JSONDecodeError:
-                pass
+                logger.debug("LLMSummary: markdown JSON block parse failed, using raw response as key_info")
 
         # 最终回退：将整个响应作为 key_info
         return StructuredSummary(key_info=response[:500])

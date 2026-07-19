@@ -3,7 +3,35 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
+import os
 from typing import Any
+
+logger = logging.getLogger(__name__)
+
+
+class MCPAuthMiddleware:
+    """MCP Server API Key 校验中间件。
+
+    模拟 HTTP 请求头语义，校验 Authorization Bearer Token。
+    在 stdio 模式下，调用方也可将 Token 通过 _api_key 参数传入。
+    """
+
+    def __init__(self, api_key: str = ""):
+        self._api_key = api_key
+
+    def validate(self, headers: dict[str, str]) -> bool | str:
+        """校验请求头中的 Authorization Bearer Token。
+
+        Returns:
+            True 表示通过，否则返回错误信息字符串。
+        """
+        if not self._api_key:
+            return True
+        auth_header = headers.get("Authorization", "")
+        if auth_header == f"Bearer {self._api_key}":
+            return True
+        return "API Key 校验失败"
 
 
 class OmniMemMCPServer:
@@ -13,6 +41,10 @@ class OmniMemMCPServer:
         from omnimem.sdk import OmniMemSDK
 
         self._sdk = OmniMemSDK(storage_dir=storage_dir, config=config)
+        # MCP Server API Key 中间件：环境变量 > 配置文件；mcp_require_api_key 强制启用校验
+        self._require_api_key = bool(self._sdk._config.get("mcp_require_api_key", False))
+        self._api_key = os.environ.get("OMNIMEM_API_KEY", "") or self._sdk._config.get("api_key", "")
+        self._auth_middleware = MCPAuthMiddleware(api_key=self._api_key)
 
     def list_tools(self) -> list[dict[str, Any]]:
         return [
@@ -195,15 +227,44 @@ class OmniMemMCPServer:
             },
         ]
 
+    def _check_api_key(self, arguments: dict[str, Any]) -> str | None:
+        """校验 MCP 工具调用的 API Key。
+
+        当未配置 api_key 且 mcp_require_api_key=false 时跳过校验；
+        当配置后，arguments 中必须包含 _api_key 或 Authorization Bearer Token，
+        且与配置值一致。
+
+        Returns:
+            错误信息字符串（校验失败时），None 表示通过。
+        """
+        if not self._api_key and not self._require_api_key:
+            return None
+        provided = arguments.get("_api_key", "")
+        # 兼容 Authorization Bearer Token 请求头语义
+        if not provided:
+            auth_header = arguments.get("Authorization", "")
+            if auth_header.startswith("Bearer "):
+                provided = auth_header[7:]
+        if provided != self._api_key:
+            return "API Key 校验失败"
+        return None
+
     def call_tool(self, name: str, arguments: dict[str, Any]) -> str:
+        auth_error = self._check_api_key(arguments)
+        if auth_error:
+            logger.warning("MCP tool %s 被拒绝: %s", name, auth_error)
+            return json.dumps({"error": auth_error}, ensure_ascii=False)
+
+        # 避免将 _api_key 透传给 SDK 工具实现
+        call_args = {k: v for k, v in arguments.items() if k != "_api_key"}
         if name == "omni_memorize":
-            result = self._sdk.memorize(**arguments)
+            result = self._sdk.memorize(**call_args)
         elif name == "omni_recall":
-            result = self._sdk.recall(**arguments)
+            result = self._sdk.recall(**call_args)
         elif name == "omni_reflect":
-            result = self._sdk.reflect(**arguments)
+            result = self._sdk.reflect(**call_args)
         elif name == "omni_govern":
-            result = self._sdk.govern(**arguments)
+            result = self._sdk.govern(**call_args)
         else:
             return json.dumps({"error": f"Unknown tool: {name}"})
         return json.dumps(result, ensure_ascii=False)
@@ -222,9 +283,13 @@ def main() -> None:
         import mcp.types as mcp_types
         from mcp.server import Server
     except ImportError:
-        raise SystemExit("pip install omnimem[mcp]")
+        raise SystemExit("pip install omnimem[mcp]") from None
 
     mcp_impl = OmniMemMCPServer(storage_dir=args.storage_dir)
+    if mcp_impl._require_api_key and not mcp_impl._api_key:
+        raise SystemExit(
+            "错误：MCP Server 已启用 mcp_require_api_key，但未配置 OMNIMEM_API_KEY 或 api_key"
+        )
     server = Server("omnimem")
 
     @server.list_tools()

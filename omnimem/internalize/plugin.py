@@ -62,12 +62,8 @@ class LoRAPlugin(InternalizationPlugin):
         return "lora"
 
     def is_available(self) -> bool:
-        try:
-            import peft  # noqa: F401
-
-            return True
-        except ImportError:
-            return False
+        # Always available: runs in simulation mode when peft is not installed
+        return True
 
     def initialize(self, config: Any, storage_dir: Any) -> None:
         from omnimem.internalize.lora_train import LoRATrainer

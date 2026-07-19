@@ -277,7 +277,7 @@ class FeedbackCollector:
                     recency_bonus = max(0, 0.1 - days_ago * 0.01)  # 10天内有效
                     base_trust = min(base_trust + recency_bonus, 1.0)
                 except (ValueError, TypeError):
-                    pass
+                    logger.debug("Feedback: parse last_click datetime failed", exc_info=True)
 
             return round(base_trust, 2)
         except Exception as e:
@@ -290,4 +290,4 @@ class FeedbackCollector:
                 self._conn.close()
                 self._conn = None
             except Exception:
-                pass
+                logger.debug("Feedback: DB connection close failed", exc_info=True)

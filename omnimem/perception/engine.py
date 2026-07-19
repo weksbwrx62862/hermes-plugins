@@ -172,9 +172,15 @@ class PerceptionEngine:
             if not has_explicit:
                 signals.should_memorize = False
 
-        # 提取事实内容
+        # 提取事实内容（原子事实提取优先）
         if signals.should_memorize:
-            signals.fact_content = self._extract_core_fact(user_content)
+            facts = self._extract_atomic_facts(user_content)
+            if facts and len(facts) == 1:
+                signals.fact_content = facts[0]
+            elif facts and len(facts) > 1:
+                signals.fact_content = " | ".join(facts)  # 多条事实用分隔符连接
+            else:
+                signals.fact_content = self._extract_core_fact(user_content)
 
         return signals
 
@@ -268,6 +274,29 @@ class PerceptionEngine:
             if marker.lower() in user_content.lower():
                 signals.should_memorize = True
                 break
+
+    def _extract_atomic_facts(self, text: str) -> list[str] | None:
+        """使用原子事实提取器提取多条独立事实。"""
+        extractor = self._get_fact_extractor()
+        if extractor is None:
+            return None
+        try:
+            return extractor.extract_facts(text)
+        except Exception as e:
+            logger.warning("原子事实提取失败，回退到正则方法: %s", e)
+            return None
+
+    def _get_fact_extractor(self):
+        """延迟初始化原子事实提取器。"""
+        if not hasattr(self, '_fact_extractor') or self._fact_extractor is None:
+            try:
+                from omnimem.perception.fact_extractor import AtomicFactExtractor
+                self._fact_extractor = AtomicFactExtractor(
+                    fallback_extractor=self._extract_core_fact
+                )
+            except Exception:
+                self._fact_extractor = None
+        return self._fact_extractor
 
     def _extract_core_fact(self, text: str) -> str:
         """从原文中提取精简核心事实。

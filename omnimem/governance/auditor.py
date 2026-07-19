@@ -62,7 +62,7 @@ class GovernanceAuditor:
         missing_in_retriever: list[str] = []
 
         # ★ 1. 以 MetaStore 为基准获取有效记忆 ID
-        meta_entries = self._store._meta_store.get_all(limit=limit)
+        meta_entries = self._store.meta_store.get_all(limit=limit)
         meta_ids: set[str] = {
             e.get("memory_id", "") for e in meta_entries if e.get("memory_id", "")
         }
@@ -100,7 +100,7 @@ class GovernanceAuditor:
         chroma_count: int = 0
         chroma_degraded: bool = False
         try:
-            chroma_count = self._retriever._vector.count()
+            chroma_count = self._retriever.vector_count()
             meta_count = len(meta_ids)
             threshold = max(meta_count // 20, 5)
             if abs(meta_count - chroma_count) > threshold:
@@ -205,7 +205,7 @@ class GovernanceAuditor:
         Returns:
             健康状态摘要
         """
-        meta_count = self._store._meta_store.count()
+        meta_count = self._store.meta_store.count()
         index_count = len(self._index.search_all_for_retrieval(limit=5000))
         retriever_count = self._retriever.bm25_document_count
 
@@ -231,7 +231,7 @@ class GovernanceAuditor:
         fixed = 0
 
         # ★ 以 MetaStore 为基准获取所有记忆 ID
-        meta_entries = self._store._meta_store.get_all(limit=limit)
+        meta_entries = self._store.meta_store.get_all(limit=limit)
         meta_ids: set[str] = {
             e.get("memory_id", "") for e in meta_entries if e.get("memory_id", "")
         }

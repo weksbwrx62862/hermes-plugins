@@ -37,28 +37,28 @@ class TraceStep:
 
 class SearchTrace:
     """检索轨迹记录器 — 内化 OpenViking 的可视化检索轨迹。
-    
+
     记录检索流程中的每一步决策：
     1. 各通道检索（vector/bm25/catalog）的结果数和耗时
     2. RRF 融合的输入/输出/阈值
     3. 过滤步骤（垃圾查询/时间衰减/隐私/关键词验证）
     4. Rerank 和 Token 裁剪
     """
-    
+
     def __init__(self, query: str):
         self.query = query
         self.steps: list[TraceStep] = []
         self._current_step: TraceStep | None = None
         self._step_start: float = 0
-    
+
     def step(self, action: str, **kwargs) -> _StepContext:
         """记录一个检索步骤。"""
         return self._StepContext(self, action, **kwargs)
-    
+
     def add_step(self, action: str, **kwargs) -> None:
         """直接添加一个步骤（不测量耗时）。"""
         self.steps.append(TraceStep(action=action, **kwargs))
-    
+
     def to_dict(self) -> dict[str, Any]:
         """序列化为字典。"""
         return {
@@ -76,19 +76,19 @@ class SearchTrace:
                 for s in self.steps
             ],
         }
-    
+
     class _StepContext:
         """上下文管理器：自动测量步骤耗时。"""
-        
+
         def __init__(self, trace: SearchTrace, action: str, **kwargs):
             self._trace = trace
             self._step = TraceStep(action=action, **kwargs)
-        
+
         def __enter__(self) -> TraceStep:
             self._step._start_time = time.time()
             self._trace._current_step = self._step
             return self._step
-        
+
         def __exit__(self, *args) -> None:
             self._step.elapsed_ms = (time.time() - self._step._start_time) * 1000
             self._trace.steps.append(self._step)

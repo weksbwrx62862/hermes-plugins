@@ -1,6 +1,6 @@
-import time
 import json
 import statistics
+import time
 from pathlib import Path
 from typing import Any
 
@@ -8,7 +8,6 @@ from omnimem.deep.consolidation import ConsolidationEngine
 from omnimem.deep.reflect import ReflectEngine
 from omnimem.internalize.kv_cache import KVCacheManager
 from omnimem.retrieval.engine import HybridRetriever
-
 
 _TEST_FACTS = [
     "用户喜欢使用Python进行数据分析",

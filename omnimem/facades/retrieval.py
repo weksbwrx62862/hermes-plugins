@@ -13,10 +13,9 @@ from pathlib import Path
 from typing import Any
 
 from omnimem.context.manager import ContextBudget, ContextManager
+from omnimem.governance.feedback import FeedbackCollector
 from omnimem.perception.engine import PerceptionEngine
 from omnimem.retrieval.engine import HybridRetriever
-from omnimem.governance.feedback import FeedbackCollector
-from omnimem.utils.llm_client import AsyncLLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +36,7 @@ class RetrievalFacade:
             recall_timeout_ms=config.get("recall_timeout_ms", 5000),
             recall_strategy=config.get("recall_strategy", "hybrid"),
             query_cache_ttl=config.get("query_cache_ttl", 60.0),
+            config=config,
         )
 
         # 上下文管理
@@ -79,6 +79,11 @@ class RetrievalFacade:
     @property
     def feedback(self) -> FeedbackCollector:
         return self._feedback
+
+    @property
+    def prefetch_executor(self) -> ThreadPoolExecutor:
+        """获取预取执行器"""
+        return self._prefetch_executor
 
     def warmup(self) -> None:
         """预热：启动时预加载所有检索组件。"""

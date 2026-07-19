@@ -1,15 +1,64 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import logging
+import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-_EXPORT_VERSION = "1.0"
+_EXPORT_VERSION = "2.0"
+_LEGACY_EXPORT_VERSION = "1.0"
 
 logger = logging.getLogger(__name__)
+
+
+def _get_export_key(encryption_key: str | None = None) -> bytes | None:
+    """获取导出文件加密密钥。
+
+    优先级：传入参数 > OMNIMEM_EXPORT_KEY 环境变量。
+    密钥必须是 Fernet 兼容的 32 字节 Base64 编码。
+    未提供密钥时返回 None，调用方可选择降级为未加密导出。
+    """
+    key = encryption_key or os.environ.get("OMNIMEM_EXPORT_KEY", "")
+    if not key:
+        return None
+    return key.encode("utf-8")
+
+
+def _encrypt_payload(payload: dict[str, Any], key: bytes) -> tuple[str, str]:
+    """使用 Fernet 加密导出内容，返回 (base64 密文, SHA-256 校验和)。"""
+    from cryptography.fernet import Fernet
+
+    f = Fernet(key)
+    plaintext = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    ciphertext = f.encrypt(plaintext)
+    checksum = hashlib.sha256(ciphertext).hexdigest()
+    return base64.b64encode(ciphertext).decode("utf-8"), checksum
+
+
+def _decrypt_payload(token_b64: str, checksum: str, key: bytes) -> dict[str, Any]:
+    """解密导出内容并校验完整性。
+
+    Raises:
+        ValueError: 校验和不匹配或解密失败。
+    """
+    from cryptography.fernet import Fernet, InvalidToken
+
+    ciphertext = base64.b64decode(token_b64.encode("utf-8"))
+    actual = hashlib.sha256(ciphertext).hexdigest()
+    if actual != checksum:
+        raise ValueError("导出文件校验和不匹配，文件可能已损坏")
+
+    f = Fernet(key)
+    try:
+        plaintext = f.decrypt(ciphertext)
+    except InvalidToken:
+        raise ValueError("导出文件解密失败，密钥可能不正确") from None
+    return json.loads(plaintext.decode("utf-8"))
 
 
 class MemoryExporter:
@@ -24,7 +73,21 @@ class MemoryExporter:
         output_path: str | Path,
         wing: str | None = None,
         memory_type: str | None = None,
+        encryption_key: str | None = None,
     ) -> int:
+        """导出记忆为 JSON 文件。
+
+        默认使用 Fernet 加密，并附带 SHA-256 校验和。
+
+        Args:
+            output_path: 输出文件路径。
+            wing: 按 wing 过滤。
+            memory_type: 按记忆类型过滤。
+            encryption_key: 可选加密密钥；默认使用 OMNIMEM_EXPORT_KEY 环境变量。
+
+        Returns:
+            导出记录数。
+        """
         output_path = Path(output_path)
         entries = self._store.search(limit=10000)
         if wing:
@@ -57,9 +120,27 @@ class MemoryExporter:
             "memories": records,
         }
 
+        key = _get_export_key(encryption_key)
+        if key is not None:
+            ciphertext_b64, checksum = _encrypt_payload(payload, key)
+            envelope: dict[str, Any] = {
+                "version": _EXPORT_VERSION,
+                "encrypted": True,
+                "checksum": checksum,
+                "payload": ciphertext_b64,
+            }
+        else:
+            logger.warning("未配置导出密钥，将以未加密方式导出")
+            envelope = {
+                "version": _EXPORT_VERSION,
+                "encrypted": False,
+                "count": len(records),
+                "memories": records,
+            }
+
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+            json.dumps(envelope, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         return len(records)
 
@@ -126,10 +207,23 @@ class MemoryImporter:
         input_path: str | Path,
         skip_duplicates: bool = True,
         resolve_conflicts: bool = True,
+        encryption_key: str | None = None,
     ) -> dict[str, int]:
         input_path = Path(input_path)
         raw = input_path.read_text(encoding="utf-8")
-        payload = json.loads(raw)
+        envelope = json.loads(raw)
+
+        # 新版加密导出格式
+        if envelope.get("encrypted") and "payload" in envelope:
+            key = _get_export_key(encryption_key)
+            payload = _decrypt_payload(
+                envelope["payload"], envelope.get("checksum", ""), key
+            )
+        elif envelope.get("version") == _LEGACY_EXPORT_VERSION or "memories" in envelope:
+            # 兼容未加密的旧版导出
+            payload = envelope
+        else:
+            raise ValueError("无法识别的导出文件格式")
 
         records = payload.get("memories", [])
         total = len(records)
