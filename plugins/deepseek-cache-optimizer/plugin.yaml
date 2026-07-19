@@ -1,7 +1,0 @@
-name: deepseek-cache-optimizer
-version: 2.0.0
-description: DeepSeek Cache Optimizer v2.0.0 - 工具结果压缩+Call-Storm抑制+缓存诊断+Reasoning裁剪
-kind: backend
-phase: UTILITY
-dependencies: []
-entry_point: __init__.py
