@@ -9,3 +9,6 @@ adaptive_multi_agent/
 skill_pool.bak/
 memory/
 skill-router/models/
+
+# Trae agent files (local only)
+.trae/
